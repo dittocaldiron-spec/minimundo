@@ -316,24 +316,41 @@ h3 { margin: 0; font-weight: 700; color: var(--c-tx-0); }
   max-height: 220px;
   overflow: auto;
 }
-.recipe {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--c-bd-1);
-  padding: 6px;
-  border-radius: var(--r-md);
-  background: #0b1222;
+.recipe { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  gap: 8px; 
+  border: 1px solid var(--c-bd-1); 
+  padding: 6px; 
+  border-radius: var(--r-md); 
+  background: #0b1222; 
 }
-.recipe button {
-  background: var(--c-acc-green);
-  color: #06231c;
-  border: 0;
-  border-radius: var(--r-sm);
-  padding: 6px 10px;
-  font-weight: 700;
-  cursor: pointer;
+.recipe-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recipe-info strong {
+  font-size: 13px;
+  color: var(--c-tx-0);
+}
+.recipe-info .needs {
+  color: var(--c-tx-dim);
+  font-size: 12px;
+}
+.recipe button { 
+  background: var(--c-acc-green); 
+  color: #06231c; 
+  border: 0; 
+  border-radius: var(--r-sm); 
+  padding: 6px 10px; 
+  font-weight: 700; 
+  cursor: pointer; 
+}
+.craft-list .empty {
+  margin: 6px 0;
+  color: var(--c-tx-dim);
 }
 
 /* -------- Toast/feedback (se o JS criar) -------- */

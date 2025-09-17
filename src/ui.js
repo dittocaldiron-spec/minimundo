@@ -1,6 +1,7 @@
 // src/ui.js
 import emitter from "./utils/events.js";
-import { getName } from "./items.js";
+import { items, getName } from "./items.js";
+import { recipes, possibleRecipes, applyCraft, formatNeedList } from "./recipes.js";
 
 /**
  * Helpers
@@ -26,6 +27,13 @@ function labelSlot(s) {
   if (!s) return "";
   const base = getName(s.id);
   return s.qty > 1 ? `${base} x${s.qty}` : base;
+}
+
+function restoreCraftingSlots(target, snapshot) {
+  Object.keys(target).forEach((key) => delete target[key]);
+  Object.entries(snapshot).forEach(([id, qty]) => {
+    if (qty > 0) target[id] = qty;
+  });
 }
 
 /**
@@ -287,9 +295,55 @@ function renderCrafting(state, emitter) {
     pills.appendChild(chip);
   });
 
-  // receitas possíveis — o filtro/listagem é responsabilidade de outro módulo (se houver).
-  // Aqui mostramos placeholder; em projetos maiores você importa recipes e cruza com slots.
-  list.innerHTML = ""; // você pode popular com receitas válidas aqui
+  list.innerHTML = "";
+  const craftable = possibleRecipes(state.crafting.slots, recipes);
+  if (!craftable.length) {
+    list.appendChild(
+      el("p", { class: "empty" }, "Nenhuma receita válida com os insumos atuais.")
+    );
+  } else {
+    craftable.forEach((rc) => {
+      const resultName = getName(rc.out.id);
+      const needs = formatNeedList(rc, items);
+      const card = el(
+        "div",
+        { class: "recipe" },
+        el(
+          "div",
+          { class: "recipe-info" },
+          el("strong", null, `${resultName} x${rc.out.qty}`),
+          el("small", { class: "needs" }, needs)
+        ),
+        el("button", null, "Criar")
+      );
+
+      card.querySelector("button").addEventListener("click", () => {
+        const snapshot = { ...state.crafting.slots };
+        const crafted = applyCraft(state.crafting.slots, rc);
+        if (!crafted) return;
+
+        const { id, qty } = crafted.out;
+        const before = state.inventory.count(id);
+        const ok = state.inventory.add(id, qty);
+        const after = state.inventory.count(id);
+        const gained = after - before;
+
+        if (!ok && gained < qty) {
+          if (gained > 0) state.inventory.remove(id, gained);
+          restoreCraftingSlots(state.crafting.slots, snapshot);
+          emitter.emit("toast", "Inventário cheio para receber o craft");
+        } else {
+          const delivered = ok ? qty : gained;
+          emitter.emit("ping", `${getName(id)} +${delivered}`);
+        }
+
+        emitter.emit("craft:changed");
+        emitter.emit("inv:changed");
+      });
+
+      list.appendChild(card);
+    });
+  }
 }
 
 /**
@@ -311,20 +365,32 @@ function renderChest(state, chestEntity, emitter) {
       emitter.emit("container:beforePut", payload);
       if (payload.cancel) return;
 
-      // mover do baú para inv
-      let moved = true;
+      let movedQty = 0;
       if (s.meta) {
-        // items com meta (ex.: chest com memória) — regra: não permitir mover chest pra outro chest
-        moved = state.inventory.firstFreeSlot() >= 0 && state.inventory.add(s.id, 1);
-        if (moved) chestEntity.inv.slots[i] = null;
+        if (state.inventory.firstFreeSlot() >= 0 && state.inventory.add(s.id, 1, s.meta)) {
+          chestEntity.inv.slots[i] = null;
+          movedQty = 1;
+        }
       } else {
-        moved = state.inventory.add(s.id, s.qty);
-        if (moved) chestEntity.inv.slots[i] = null;
+        const before = state.inventory.count(s.id);
+        state.inventory.add(s.id, s.qty);
+        const after = state.inventory.count(s.id);
+        movedQty = after - before;
+        if (movedQty >= s.qty) {
+          chestEntity.inv.slots[i] = null;
+        } else if (movedQty > 0) {
+          chestEntity.inv.slots[i].qty -= movedQty;
+        }
       }
-      if (!moved) emitter.emit("toast", "Inventário cheio!");
-      emitter.emit("inv:changed");
-      emitter.emit("chest:changed");
-      renderChest(state, chestEntity, emitter);
+
+      if (movedQty <= 0) {
+        emitter.emit("toast", "Inventário cheio!");
+      } else {
+        emitter.emit("ping", `${getName(s.id)} +${movedQty}`);
+        emitter.emit("inv:changed");
+        emitter.emit("chest:changed");
+        renderChest(state, chestEntity, emitter);
+      }
     });
     chestGrid.appendChild(d);
   });
@@ -340,25 +406,38 @@ function renderChest(state, chestEntity, emitter) {
       emitter.emit("container:beforePut", payload);
       if (payload.cancel) return;
 
-      let moved = true;
+      let movedQty = 0;
       if (s.meta) {
-        // não permitir chest (meta) virar "outro item" — mantém o mesmo id com meta
         const free = chestEntity.inv.firstFreeSlot();
         if (free >= 0) {
           chestEntity.inv.slots[free] = { id: s.id, qty: 1, meta: s.meta };
           state.inventory.slots[i] = null;
-        } else moved = false;
+          movedQty = 1;
+        }
       } else {
-        // mover pilha inteira
-        const ok = chestEntity.inv.add(s.id, s.qty);
-        if (ok) state.inventory.slots[i] = null;
-        else moved = false;
+        const before = chestEntity.inv.count(s.id);
+        chestEntity.inv.add(s.id, s.qty);
+        const after = chestEntity.inv.count(s.id);
+        movedQty = after - before;
+        if (movedQty >= s.qty) {
+          state.inventory.slots[i] = null;
+        } else if (movedQty > 0) {
+          state.inventory.slots[i].qty -= movedQty;
+        }
       }
 
-      if (!moved) emitter.emit("toast", "Baú sem espaço!");
-      emitter.emit("inv:changed");
-      emitter.emit("chest:changed");
-      renderChest(state, chestEntity, emitter);
+      if (movedQty <= 0) {
+        emitter.emit("toast", "Baú sem espaço!");
+      } else {
+        if (state.player.hand === s.id && state.inventory.count(s.id) <= 0) {
+          state.player.hand = null;
+          renderHand(state);
+        }
+        emitter.emit("ping", `${getName(s.id)} armazenado (${movedQty})`);
+        emitter.emit("inv:changed");
+        emitter.emit("chest:changed");
+        renderChest(state, chestEntity, emitter);
+      }
     });
     invGrid.appendChild(d);
   });
@@ -418,6 +497,7 @@ function bindInventoryOpenClose(state, emitter) {
   emitter.on("inv:changed", () => {
     renderInventoryGrid(state, emitter);
     renderMoney(state);
+    renderHand(state);
   });
   emitter.on("craft:changed", () => {
     if (!craftOpen) return;
