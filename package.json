@@ -1,0 +1,20 @@
+{
+  "name": "mini-mundo",
+  "version": "1.0.0",
+  "description": "Mini Mundo 2D com Parcel, Lodash e Tiny-Emitter",
+  "type": "module",
+  "scripts": {
+    "start": "parcel serve index.html --open",
+    "build": "parcel build index.html"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "tiny-emitter": "^2.1.0"
+  },
+  "devDependencies": {
+    "parcel": "^2.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
