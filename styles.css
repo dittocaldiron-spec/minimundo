@@ -1,0 +1,396 @@
+/* ================================
+   Mini Mundo 2D — styles.css
+   Paleta HEX + utilidades essenciais
+   ================================ */
+
+/* -------- Paleta (HEX) -------- */
+:root {
+  /* Base */
+  --c-bg-0: #0b1020;  /* fundo global */
+  --c-bg-1: #0f1a33;  /* canvas bg */
+  --c-panel: #151825; /* janelas */
+  --c-overlay: #000000; /* overlay preto base */
+
+  /* Borda/Separes */
+  --c-bd-1: #2c3446;
+  --c-bd-2: #3a4560;
+
+  /* Texto */
+  --c-tx-0: #e5e7eb;
+  --c-tx-1: #cbd5e1;
+  --c-tx-dim: #9aa6bd;
+
+  /* Acentos */
+  --c-acc-blue: #0ea5e9;
+  --c-acc-green: #10b981;
+  --c-acc-amber: #fbbf24;
+  --c-acc-amber-2: #fde68a;
+  --c-acc-cyan: #22d3ee;
+  --c-acc-pink: #f0abfc;
+
+  /* Alertas/feedback */
+  --c-ok: #16a34a;
+  --c-warn: #f59e0b;
+  --c-err: #ef4444;
+
+  /* Sombras simples */
+  --shadow-1: 0 6px 24px rgba(0,0,0,.25);
+  --shadow-2: 0 10px 34px rgba(0,0,0,.36);
+
+  /* Opacidades úteis */
+  --op-05: rgba(255,255,255,.05);
+  --op-08: rgba(255,255,255,.08);
+  --op-12: rgba(255,255,255,.12);
+  --op-15: rgba(255,255,255,.15);
+  --op-20: rgba(255,255,255,.20);
+
+  /* Raio padrão */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+
+  /* Tamanhos */
+  --hud-w: 360px;
+  --inv-w: 980px;
+
+  /* Z-layers (garante canvas clicável) */
+  --z-canvas: 10;
+  --z-hud: 20;
+  --z-overlay: 30;        /* backdrop inventário/baú */
+  --z-window: 40;         /* janelas de UI */
+  --z-toast: 50;          /* toasts/snacks */
+}
+
+/* -------- Reset básico + base -------- */
+* { box-sizing: border-box; }
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--c-bg-0);
+  color: var(--c-tx-0);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { color: var(--c-acc-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font-family: inherit; }
+
+/* -------- Layout raiz -------- */
+.wrap {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+
+/* Canvas sempre clicável por padrão */
+canvas#game {
+  display: block;
+  width: min(96vw, 1100px);
+  height: min(60vh, 650px);
+  background: var(--c-bg-1);
+  border: 1px solid #0b1226;
+  image-rendering: pixelated;
+  z-index: var(--z-canvas);
+  pointer-events: auto;
+}
+
+/* -------- HUD -------- */
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-hud);
+  pointer-events: none; /* HUD neutro; filhos habilitam se necessário */
+}
+
+/* Dinheiro */
+.money {
+  position: absolute;
+  left: 10px; top: 10px;
+  display: flex;
+  gap: 8px; align-items: center;
+  background: rgba(21, 24, 37, .88);
+  border: 1px solid var(--op-15);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-weight: 700;
+  box-shadow: var(--shadow-1);
+  pointer-events: auto;
+}
+.coin-dot {
+  width: 12px; height: 12px;
+  border-radius: 999px;
+  background: var(--c-acc-amber);
+  border: 2px solid var(--c-acc-amber-2);
+  box-shadow: 0 0 0 1px #a16207 inset;
+}
+
+/* Painel rápido (controles) */
+.panel {
+  position: absolute;
+  right: 10px; top: 10px;
+  width: var(--hud-w);
+  background: rgba(21, 24, 37, .88);
+  border: 1px solid var(--op-15);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  pointer-events: auto;
+  box-shadow: var(--shadow-1);
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  border: 1px solid var(--op-15);
+  color: var(--c-tx-1);
+  padding: 2px 6px;
+  border-radius: 999px;
+  opacity: .95;
+}
+
+/* Dica inferior */
+.tip {
+  position: absolute;
+  left: 10px; bottom: 10px;
+  font-size: 12px;
+  color: var(--c-tx-1);
+  background: rgba(21, 24, 37, .88);
+  border: 1px solid var(--op-15);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  pointer-events: auto;
+  box-shadow: var(--shadow-1);
+}
+
+/* -------- Overlays/janelas (Inventário, Baú, Carteira) -------- */
+.inventory, .wallet {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  z-index: var(--z-overlay);
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+  pointer-events: auto; /* recebe clique para fechar fora da janela, caso queira */
+}
+.inventory.open, .wallet.open { display: grid; }
+
+.inv-window, .wal-window {
+  z-index: var(--z-window);
+  background: var(--c-panel);
+  border: 1px solid var(--c-bd-1);
+  border-radius: var(--r-lg);
+  width: min(92vw, var(--inv-w));
+  padding: 10px;
+  box-shadow: var(--shadow-2);
+  pointer-events: auto; /* janela clicável */
+}
+
+.inv-header, .wal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+h3 { margin: 0; font-weight: 700; color: var(--c-tx-0); }
+
+/* -------- Botões -------- */
+.btn {
+  background: var(--c-acc-blue);
+  color: #02131d;
+  border: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(0,0,0,.25);
+  transition: transform .06s ease, filter .12s ease;
+}
+.btn:hover { filter: brightness(1.05); }
+.btn:active { transform: translateY(1px); }
+.btn--ok { background: var(--c-ok); color: #06170b; }
+.btn--warn { background: var(--c-warn); color: #1f1502; }
+.btn--err { background: var(--c-err); color: #1a0404; }
+
+/* -------- Grids de slots -------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+}
+.grid.small { grid-template-columns: repeat(6, 1fr); }
+
+.slot {
+  aspect-ratio: 1/1;
+  border: 1px dashed var(--c-bd-1);
+  border-radius: var(--r-md);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--c-tx-1);
+  background: rgba(15, 23, 42, .62);
+  user-select: none;
+  overflow: hidden;
+  position: relative;
+}
+.slot.full {
+  border-style: solid;
+  background: rgba(15, 23, 42, .90);
+}
+.slot:hover { outline: 1px solid var(--c-bd-2); }
+
+/* Quantidade dentro do slot (opcional) */
+.slot .qty {
+  position: absolute;
+  right: 6px; bottom: 4px;
+  font-size: 11px;
+  color: var(--c-tx-1);
+  opacity: .9;
+}
+
+/* Crafting */
+.craft {
+  border: 1px solid var(--c-bd-1);
+  border-radius: var(--r-md);
+  padding: 8px;
+  margin-top: 10px;
+  background: rgba(2, 6, 23, .35);
+}
+.hidden { display: none !important; }
+
+.craft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cslot {
+  border: 1px dashed var(--c-bd-1);
+  border-radius: var(--r-md);
+  min-height: 52px;
+  display: grid;
+  place-items: center;
+  background: #0b1222;
+  color: var(--c-tx-1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.cslot.full {
+  border-style: solid;
+  background: rgba(15, 23, 42, .86);
+}
+
+.craft-in {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.pill {
+  border: 1px solid var(--c-bd-1);
+  background: #0b1222;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--c-tx-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pill button {
+  background: #1f2937;
+  border: 1px solid var(--c-bd-1);
+  color: var(--c-tx-0);
+  border-radius: var(--r-xs);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.craft-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+.recipe {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--c-bd-1);
+  padding: 6px;
+  border-radius: var(--r-md);
+  background: #0b1222;
+}
+.recipe button {
+  background: var(--c-acc-green);
+  color: #06231c;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* -------- Toast/feedback (se o JS criar) -------- */
+.toast {
+  position: absolute;
+  left: 50%; top: 20px;
+  transform: translateX(-50%);
+  background: rgba(10, 15, 25, .84);
+  border: 1px solid var(--c-acc-blue);
+  color: #e2f4ff;
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  z-index: var(--z-toast);
+  box-shadow: var(--shadow-1);
+  white-space: nowrap;
+}
+
+/* -------- Scrollbar (WebKit) -------- */
+.craft-list::-webkit-scrollbar { width: 10px; }
+.craft-list::-webkit-scrollbar-thumb {
+  background: var(--op-12);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.craft-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* -------- Acessibilidade / motion -------- */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* -------- Responsividade -------- */
+@media (max-width: 1200px) {
+  .panel { width: min(92vw, 560px); }
+  .inv-window, .wal-window { width: min(94vw, 920px); }
+}
+@media (max-width: 720px) {
+  canvas#game {
+    width: 96vw;
+    height: 58vh;
+  }
+  .panel { width: min(92vw, 480px); }
+  .grid { grid-template-columns: repeat(6, 1fr); }
+  .grid.small { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* -------- Estados utilitários -------- */
+.u-center { display: grid; place-items: center; }
+.u-dim { color: var(--c-tx-dim); }
+.u-muted { color: var(--c-tx-1); }
+.u-accent { color: var(--c-acc-cyan); }
+
+/* -------- Click-through control -------- */
+/* Se precisar que o HUD inteiro não bloqueie o canvas,
+   mantenha .hud com pointer-events:none e habilite
+   apenas os filhos que recebem clique (money, .panel, .tip, .inventory/.wallet open) */
+.hud > * { pointer-events: auto; }
