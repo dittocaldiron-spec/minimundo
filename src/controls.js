@@ -1,6 +1,4 @@
 // src/controls.js
-import emitter from "./utils/events.js";
-
 /**
  * Captura teclado e mouse, mantém um estado de input no `state`,
  * e emite eventos de alto nível que o mundo/UI consomem.
@@ -22,9 +20,6 @@ export function setupControls(state, emitter) {
     console.warn("[controls] canvas #game não encontrado");
   }
 
-  // =======================
-  // Estado do input
-  // =======================
   const keys = {
     w: false,
     a: false,
@@ -32,23 +27,20 @@ export function setupControls(state, emitter) {
     d: false,
   };
 
-  // Guardamos também no state para quem preferir ler direto
   state.input = state.input || {
     w: false,
     a: false,
     s: false,
     d: false,
     pointer: { sx: 0, sy: 0 },
+    dir: { dx: 0, dy: 0 },
   };
 
-  // =======================
-  // Utils
-  // =======================
   const toLower = (e) => (e.key || "").toLowerCase();
 
   function computeDir() {
-    let dx = 0,
-      dy = 0;
+    let dx = 0;
+    let dy = 0;
     if (keys.w) dy -= 1;
     if (keys.s) dy += 1;
     if (keys.a) dx -= 1;
@@ -58,40 +50,23 @@ export function setupControls(state, emitter) {
   }
 
   function canvasPointFromEvent(e) {
-    // coordenadas da posição do mouse relativas ao canvas (escala resolvida)
     const rect = canvas.getBoundingClientRect();
     const sx = ((e.clientX - rect.left) * canvas.width) / rect.width;
     const sy = ((e.clientY - rect.top) * canvas.height) / rect.height;
     return { sx, sy };
   }
 
-  // =======================
-  // Teclado
-  // =======================
   function onKeyDown(e) {
     const k = toLower(e);
-    // evita rolagem em setas/espaço se quiser
-    // if ([" "].includes(k)) e.preventDefault();
-
     if (k === "w") keys.w = state.input.w = true;
     if (k === "a") keys.a = state.input.a = true;
     if (k === "s") keys.s = state.input.s = true;
     if (k === "d") keys.d = state.input.d = true;
 
-    if (k === "e") {
-      // toggle inventário e fechar baú (o main.js já liga isso)
-      emitter.emit("action:toggleInventory");
-    }
-    if (k === "c") {
-      emitter.emit("action:toggleWallet");
-    }
-    if (k === "escape") {
-      emitter.emit("action:esc");
-    }
-    if (k === "q") {
-      // dropa 1 do item atualmente na mão (se houver)
-      emitter.emit("player:dropHandOne");
-    }
+    if (k === "e") emitter.emit("action:toggleInventory");
+    if (k === "c") emitter.emit("action:toggleWallet");
+    if (k === "escape") emitter.emit("action:esc");
+    if (k === "q") emitter.emit("player:dropHandOne");
   }
 
   function onKeyUp(e) {
@@ -105,9 +80,6 @@ export function setupControls(state, emitter) {
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
 
-  // =======================
-  // Mouse
-  // =======================
   function onMouseMove(e) {
     if (!canvas) return;
     const { sx, sy } = canvasPointFromEvent(e);
@@ -127,17 +99,11 @@ export function setupControls(state, emitter) {
       ctrl: e.ctrlKey,
     };
 
-    if (e.button === 0) {
-      // esquerdo = interagir/atacar/coletar
-      emitter.emit("click:left", payload);
-    } else if (e.button === 2) {
-      // direito = colocar/abrir
-      emitter.emit("click:right", payload);
-    }
+    if (e.button === 0) emitter.emit("click:left", payload);
+    else if (e.button === 2) emitter.emit("click:right", payload);
   }
 
   function onContextMenu(e) {
-    // desabilita menu de contexto no canvas para usar botão direito
     e.preventDefault();
   }
 
@@ -147,24 +113,18 @@ export function setupControls(state, emitter) {
     canvas.addEventListener("contextmenu", onContextMenu);
   }
 
-  // =======================
-  // Loop de direção contínua
-  // =======================
   let running = true;
   let rafId = 0;
 
   function tick() {
     if (!running) return;
     const dir = computeDir();
-    // emite a direção atual a cada frame — o world.js pode usar para mover o player
+    state.input.dir = dir;
     emitter.emit("input:dir", dir);
     rafId = requestAnimationFrame(tick);
   }
   rafId = requestAnimationFrame(tick);
 
-  // =======================
-  // Cleanup opcional (se um dia precisar descarregar o módulo)
-  // =======================
   function dispose() {
     running = false;
     if (rafId) cancelAnimationFrame(rafId);
@@ -177,7 +137,6 @@ export function setupControls(state, emitter) {
     }
   }
 
-  // expõe para debug
   if (typeof window !== "undefined") {
     window.__CONTROLS__ = { dispose, keys };
   }
