@@ -1,5 +1,4 @@
-import { BerryBush } from "../entities/props/berry-bush.js";
-import { NutTree } from "../entities/props/nut-tree.js";
+import { BerryBush, NutTree } from "../entities/index.js";
 
 const SPAWN_DEFINITIONS = [
   {

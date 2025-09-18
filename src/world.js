@@ -6,17 +6,19 @@ import {
   isPlaceable,
   getItem,
 } from "./items.js";
-import { Tree } from "./entities/props/tree.js";
-import { Rock } from "./entities/props/rock.js";
-import { Campfire } from "./entities/props/campfire.js";
-import { Chest } from "./entities/props/chest.js";
-import { BerryBush } from "./entities/props/berry-bush.js";
-import { NutTree } from "./entities/props/nut-tree.js";
-import { DisplayProp } from "./entities/props/display.js";
-import { Cow } from "./entities/creatures/cow.js";
-import { ItemDrop } from "./entities/items/drop.js";
-import { Coin } from "./entities/items/coin.js";
-import { HitParticles } from "./entities/effects/hit-particles.js";
+import {
+  Tree,
+  Rock,
+  Campfire,
+  Chest,
+  BerryBush,
+  NutTree,
+  DisplayProp,
+  Cow,
+  ItemDrop,
+  Coin,
+  HitParticles,
+} from "./entities/index.js";
 import {
   populateNaturalSpawns,
   updateNaturalSpawns,

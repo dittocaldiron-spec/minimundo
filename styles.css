@@ -171,6 +171,72 @@ canvas#game.is-blur {
   box-shadow: var(--shadow-1);
 }
 
+/* Hotbar (primeira fileira do inventário) */
+.hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--r-lg);
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: var(--shadow-2);
+  pointer-events: auto;
+}
+
+.hotbar__slot {
+  position: relative;
+  width: 64px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: var(--r-md);
+  background: rgba(10, 16, 30, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: var(--c-tx-1);
+  font-size: 12px;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hotbar__slot--active {
+  border-color: var(--c-acc-amber);
+  background: rgba(250, 204, 21, 0.16);
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.28);
+  color: var(--c-tx-0);
+}
+
+.hotbar__key {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 11px;
+  color: var(--c-tx-dim);
+  opacity: 0.8;
+}
+
+.hotbar__item {
+  font-weight: 600;
+  color: var(--c-tx-0);
+}
+
+.hotbar__item--empty {
+  color: var(--c-tx-dim);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.hotbar__qty {
+  font-size: 11px;
+  color: var(--c-tx-1);
+}
+
 /* Pizza de macros (Hunger HUD) */
 .hud-hunger {
   position: absolute;

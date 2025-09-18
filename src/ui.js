@@ -30,6 +30,8 @@ function labelSlot(s) {
   return s.qty > 1 ? `${base} x${s.qty}` : base;
 }
 
+const HOTBAR_SLOTS = 8;
+
 function restoreCraftingSlots(target, snapshot) {
   Object.keys(target).forEach((key) => delete target[key]);
   Object.entries(snapshot).forEach(([id, qty]) => {
@@ -101,6 +103,13 @@ function createHUD() {
       "Baú: DIR abre, ESQ recolhe. Fogueira cozinha carne (30s). Pedras 50% carvão. Vaca foge ao ser atacada; dropa 5 carnes, 2 couros e 3 ossos."
     );
     hud.appendChild(tip);
+  }
+
+  // Hotbar (primeira fileira do inventário)
+  let hotbar = $("#hotbar", hud);
+  if (!hotbar) {
+    hotbar = el("div", { class: "hotbar", id: "hotbar" });
+    hud.appendChild(hotbar);
   }
 
   return hud;
@@ -203,10 +212,43 @@ function renderMoney(state) {
     elCount.textContent = coins;
   }
 }
+function renderHotbar(state) {
+  const wrap = $("#hotbar");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+
+  for (let index = 0; index < HOTBAR_SLOTS; index++) {
+    const slot = state.inventory.slots[index] || null;
+    const keyLabel = index + 1;
+    const active = slot && state.player.hand === slot.id;
+    const classes = ["hotbar__slot"];
+    if (active) classes.push("hotbar__slot--active");
+    const slotEl = el("div", { class: classes.join(" ") });
+    slotEl.title = slot ? labelSlot(slot) : "Slot vazio";
+
+    slotEl.appendChild(el("span", { class: "hotbar__key" }, keyLabel));
+
+    if (slot) {
+      slotEl.appendChild(el("span", { class: "hotbar__item" }, getName(slot.id)));
+      const qty = slot.meta ? 1 : slot.qty;
+      if (qty > 1) {
+        slotEl.appendChild(el("span", { class: "hotbar__qty" }, `x${qty}`));
+      }
+    } else {
+      slotEl.appendChild(
+        el("span", { class: "hotbar__item hotbar__item--empty" }, "Vazio")
+      );
+    }
+
+    wrap.appendChild(slotEl);
+  }
+}
 function renderHand(state) {
   const h = $("#handInfo");
-  if (!h) return;
-  h.textContent = state.player.hand ? getName(state.player.hand) : "(vazio)";
+  if (h) {
+    h.textContent = state.player.hand ? getName(state.player.hand) : "(vazio)";
+  }
+  renderHotbar(state);
 }
 function renderInventoryGrid(state, emitter) {
   const grid = $("#invGrid");
