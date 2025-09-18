@@ -2,6 +2,7 @@
 import emitter from "./utils/events.js";
 import { items, getName } from "./items.js";
 import { recipes, possibleRecipes, applyCraft, formatNeedList } from "./recipes.js";
+import { setupHungerHUD } from "./ui/hud-hunger.js";
 
 /**
  * Helpers
@@ -600,6 +601,7 @@ function bindToasts() {
  */
 export function setupUI(state, emitter) {
   createHUD();
+  setupHungerHUD(emitter);
   createInventoryWindows();
   renderMoney(state);
   renderHand(state);

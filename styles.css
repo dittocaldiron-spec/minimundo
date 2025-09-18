@@ -97,6 +97,12 @@ canvas#game {
   image-rendering: pixelated;
   z-index: var(--z-canvas);
   pointer-events: auto;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+
+canvas#game.is-blur {
+  filter: blur(3px) saturate(1.12);
+  opacity: 0.9;
 }
 
 /* -------- HUD -------- */
@@ -163,6 +169,139 @@ canvas#game {
   padding: 6px 8px;
   pointer-events: auto;
   box-shadow: var(--shadow-1);
+}
+
+/* Pizza de macros (Hunger HUD) */
+.hud-hunger {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+  pointer-events: none;
+}
+
+.hud-hunger__pizza {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hud-hunger__slice {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  --fill: var(--fill, 0);
+  --fill-deg: calc(var(--fill) * 120deg);
+  background:
+    conic-gradient(from var(--start),
+      var(--color) 0deg var(--fill-deg),
+      rgba(15, 23, 42, 0.55) var(--fill-deg) 120deg,
+      transparent 120deg 360deg);
+  -webkit-mask: conic-gradient(from var(--start), #000 0deg 120deg, transparent 120deg 360deg);
+          mask: conic-gradient(from var(--start), #000 0deg 120deg, transparent 120deg 360deg);
+  transition: background 0.3s ease;
+}
+
+.hud-hunger__slice::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.55);
+  opacity: 0.35;
+}
+
+.hud-hunger__slice.over {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.55));
+}
+
+.hud-hunger__slice--carbs {
+  --color: rgba(34, 197, 94, 0.88);
+  --start: -90deg;
+}
+
+.hud-hunger__slice--protein {
+  --color: rgba(239, 68, 68, 0.92);
+  --start: 30deg;
+}
+
+.hud-hunger__slice--fat {
+  --color: rgba(250, 204, 21, 0.92);
+  --start: 150deg;
+}
+
+.hud-hunger__mask {
+  position: absolute;
+  inset: 32%;
+  border-radius: 50%;
+  background: rgba(8, 12, 24, 0.92);
+  box-shadow: inset 0 0 0 2px rgba(148, 163, 184, 0.22);
+}
+
+.hud-hunger__badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.2s ease, transform 0.25s ease;
+}
+
+.hud-hunger--has-effects .hud-hunger__badges {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hud-hunger__badge {
+  pointer-events: auto;
+  background: rgba(15, 23, 42, 0.88);
+  border-color: rgba(148, 163, 184, 0.28);
+  color: var(--c-tx-0);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.hud-hunger__badge.effect-slow {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.55);
+  color: #bfdbfe;
+}
+
+.hud-hunger__badge.effect-strength {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(190, 18, 60, 0.6);
+  color: #fee2e2;
+}
+
+.hud-hunger__badge.effect-weakness {
+  background: rgba(148, 163, 184, 0.24);
+  border-color: rgba(148, 163, 184, 0.5);
+  color: #e2e8f0;
+}
+
+.hud-hunger__badge.effect-saturation {
+  background: rgba(250, 204, 21, 0.22);
+  border-color: rgba(202, 138, 4, 0.58);
+  color: #facc15;
+}
+
+.hud-hunger__badge.effect-starving {
+  background: rgba(220, 38, 38, 0.28);
+  border-color: rgba(153, 27, 27, 0.7);
+  color: #fee2e2;
 }
 
 /* -------- Overlays/janelas (Inventário, Baú, Carteira) -------- */
