@@ -1,17 +1,48 @@
 // src/world.js
 import { makeInventory } from "./state.js";
-import { getName, hasTag, placeSpec } from "./items.js";
+import {
+  getName,
+  hasTag,
+  isPlaceable,
+  getItem,
+} from "./items.js";
+import {
+  Tree,
+  Rock,
+  Campfire,
+  Chest,
+  BerryBush,
+  NutTree,
+  DisplayProp,
+  Cow,
+  ItemDrop,
+  Coin,
+  HitParticles,
+} from "./entities/index.js";
+import {
+  populateNaturalSpawns,
+  updateNaturalSpawns,
+} from "./systems/spawn.js";
+import {
+  initHunger,
+  applyActionGroup,
+  getHungerState,
+  hasEffect,
+  tick as hungerTick,
+  getSprintMultiplier,
+  applyFood,
+} from "./systems/hunger.js";
+import { STAMINA } from "./config/hunger.config.js";
 
 const TILE = 32;
 const PLAYER_RADIUS = 14;
 const INTERACT_RANGE = 56;
-const AUTOPICK_RADIUS = 32;
+const SLOW_MULTIPLIER = 0.7;
+const SPRINT_MULTIPLIER = 1.55;
+const COW_CHAIN_RADIUS = 220;
 
-const rand = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-
-let nextEntityId = 1;
-const withId = (data) => ({ id: nextEntityId++, ...data });
+const randBetween = (min, max) => min + Math.random() * (max - min);
 
 function snapToTile(x, y) {
   return {
@@ -28,22 +59,76 @@ function ensurePlayerDefaults(state) {
   player.h = player.h ?? 32;
   player.speed = player.speed ?? 210;
   player.hand = player.hand ?? null;
-  player.moveDir = player.moveDir || { dx: 0, dy: 0 };
+  player.moveDir = player.moveDir || { dx: 0, dy: 0, sprint: false };
   player.focusId = null;
 }
 
-function isSolid(entity) {
-  if (!entity || entity.dead) return false;
-  if (entity.type === "placed") return !!entity.solid;
-  return ["tree", "rock", "chest", "campfire", "cow"].includes(entity.type);
+function clampPosition(state, x, y) {
+  return {
+    x: clamp(x, PLAYER_RADIUS, state.world.w - PLAYER_RADIUS),
+    y: clamp(y, PLAYER_RADIUS, state.world.h - PLAYER_RADIUS),
+  };
+}
+
+function addEntity(state, entity) {
+  if (!entity) return null;
+  state.entities.push(entity);
+  return entity;
+}
+
+function spawnDrop(state, itemId, options = {}) {
+  const {
+    qty = 1,
+    meta = null,
+    ttl = 300000,
+    x = state.player.x,
+    y = state.player.y,
+  } = options;
+  const drop = new ItemDrop({ itemId, qty, meta, ttl, x, y });
+  addEntity(state, drop);
+  return drop;
+}
+
+function spawnEffect(state, type, options = {}) {
+  if (type === "hit") {
+    const duration = 0.3 + Math.random() * 0.3;
+    addEntity(state, new HitParticles({ ...options, duration }));
+  }
+}
+
+function spawnCoin(state, x, y) {
+  addEntity(state, new Coin({ x, y }));
+}
+
+function spawnCampfire(state, x, y) {
+  addEntity(state, new Campfire({ x, y }));
+}
+
+function spawnChest(state, x, y, inventory) {
+  addEntity(state, new Chest({ x, y, inventory }));
+}
+
+function spawnTree(state, x, y) {
+  addEntity(state, new Tree({ x, y }));
+}
+
+function spawnRock(state, x, y) {
+  addEntity(state, new Rock({ x, y }));
+}
+
+function spawnCow(state, x, y) {
+  addEntity(state, new Cow({ x, y }));
+}
+
+function isBlocking(entity) {
+  return !!entity && !entity.dead && entity.tangible;
 }
 
 function collides(state, targetX, targetY) {
-  for (const ent of state.entities) {
-    if (!isSolid(ent)) continue;
-    const radius = ent.r ?? 16;
-    const dist = Math.hypot(ent.x - targetX, ent.y - targetY);
-    if (dist < radius + PLAYER_RADIUS) return true;
+  for (const entity of state.entities) {
+    if (!isBlocking(entity)) continue;
+    const dist = Math.hypot(entity.x - targetX, entity.y - targetY);
+    if (dist < (entity.radius || 16) + PLAYER_RADIUS) return true;
   }
   return false;
 }
@@ -64,225 +149,135 @@ function findNearest(state, predicate) {
   return { entity: best, distance: bestDist };
 }
 
+function isPickup(entity) {
+  return entity instanceof ItemDrop || entity instanceof Coin;
+}
+
 function getInteractionTarget(state) {
   return findNearest(
     state,
     (ent) =>
-      ent.type === "placed" ||
-      ent.type === "campfire" ||
-      ent.type === "chest" ||
-      ent.type === "tree" ||
-      ent.type === "rock" ||
-      ent.type === "cow" ||
-      (ent.type === "item" && !ent.picked) ||
-      (ent.type === "coin" && !ent.picked)
+      ent instanceof ItemDrop ||
+      ent instanceof Coin ||
+      ent instanceof Tree ||
+      ent instanceof Rock ||
+      ent instanceof Cow ||
+      ent instanceof Chest ||
+      ent instanceof Campfire ||
+      ent instanceof BerryBush ||
+      ent instanceof NutTree ||
+      ent instanceof DisplayProp
   );
 }
 
-function spawnDrop(state, id, x, y, options = {}) {
-  const { qty = 1, ttl = 300000, meta = null } = options;
-  const count = Math.max(1, qty);
-  for (let i = 0; i < count; i++) {
-    state.entities.push(
-      withId({
-        type: "item",
-        itemId: id,
-        meta: meta && i === 0 ? meta : meta,
-        x: x + (Math.random() * 14 - 7),
-        y: y + (Math.random() * 10 - 5),
-        r: 12,
-        picked: 0,
-        expiresAt: ttl ? performance.now() + ttl : null,
-      })
-    );
-  }
-}
-
-function ensureCampfire(state, cx, cy) {
-  state.entities.push(
-    withId({
-      type: "campfire",
-      x: cx,
-      y: cy,
-      r: placeSpec("campfire").radius,
-      cooking: 0,
-      doneAt: 0,
-    })
-  );
-}
-
-function generateWorld(state) {
-  state.entities = [];
-
-  // Coins scattered around the map
-  for (let i = 0; i < 18; i++) {
-    const pos = snapToTile(rand(160, state.world.w - 160), rand(160, state.world.h - 160));
-    state.entities.push(withId({ type: "coin", x: pos.x, y: pos.y, r: 10, picked: 0 }));
-  }
-
-  // Trees
-  for (let i = 0; i < 28; i++) {
-    const pos = snapToTile(rand(120, state.world.w - 120), rand(120, state.world.h - 120));
-    state.entities.push(withId({ type: "tree", x: pos.x, y: pos.y, r: 22, hp: 5, taps: 0 }));
-  }
-
-  // Rocks
-  for (let i = 0; i < 20; i++) {
-    const pos = snapToTile(rand(220, state.world.w - 220), rand(220, state.world.h - 220));
-    state.entities.push(withId({ type: "rock", x: pos.x, y: pos.y, r: 20, hp: 20 }));
-  }
-
-  // Passive cows
-  for (let i = 0; i < 6; i++) {
-    const pos = snapToTile(rand(180, state.world.w - 180), rand(180, state.world.h - 180));
-    state.entities.push(withId({ type: "cow", x: pos.x, y: pos.y, r: 16, hp: 3, fleeUntil: 0 }));
-  }
-
-  // A campfire near spawn so the player can cook early on
-  const campfireSpot = snapToTile(state.world.w / 2 + 120, state.world.h / 2 + 100);
-  ensureCampfire(state, campfireSpot.x, campfireSpot.y);
-
-  // A chest already stocked with supplies
-  const chestSpot = snapToTile(state.world.w / 2 + 200, state.world.h / 2 - 60);
-  const starterChest = withId({
-    type: "chest",
-    x: chestSpot.x,
-    y: chestSpot.y,
-    r: placeSpec("chest").radius,
-    inv: makeInventory(18),
-  });
-  starterChest.inv.add("wood", 10);
-  starterChest.inv.add("rockshard", 6);
-  starterChest.inv.add("coin", 12);
-  state.entities.push(starterChest);
-
-  // Starter axe on the ground
-  const axeSpot = snapToTile(state.world.w / 2 - 100, state.world.h / 2);
-  spawnDrop(state, "axe", axeSpot.x, axeSpot.y, { ttl: 600000 });
-
-  // Few saplings to encourage planting
-  for (let i = 0; i < 3; i++) {
-    const pos = snapToTile(state.world.w / 2 - 80 + i * 22, state.world.h / 2 + 80);
-    spawnDrop(state, "sapling", pos.x, pos.y, { ttl: 600000 });
-  }
-}
-
-function pickupItem(state, entity, emitter) {
-  if (entity.dead) return;
-  const before = state.inventory.count(entity.itemId);
-  const added = state.inventory.add(entity.itemId, 1, entity.meta || null);
-  const after = state.inventory.count(entity.itemId);
-  if (!added && after === before) {
+function pickupItem(state, drop, emitter) {
+  if (drop.dead) return;
+  const qty = drop.qty || 1;
+  const added = state.inventory.add(drop.itemId, qty, drop.meta || null);
+  if (!added) {
     emitter.emit("toast", "Inventário cheio!");
     return;
   }
-  entity.dead = true;
+  drop.dead = true;
   emitter.emit("inv:changed");
-  emitter.emit("ping", `Pegou ${getName(entity.itemId)}`);
+  emitter.emit("ping", `Pegou ${getName(drop.itemId)}${qty > 1 ? ` x${qty}` : ""}`);
 }
 
-function pickupCoin(state, entity, emitter) {
-  if (entity.dead) return;
-  const before = state.wallet.count("coin");
-  const added = state.wallet.add("coin", 1);
-  const after = state.wallet.count("coin");
-  if (!added && after === before) {
+function pickupCoin(state, coin, emitter) {
+  if (coin.dead) return;
+  const ok = state.wallet.add("coin", 1);
+  if (!ok) {
     emitter.emit("toast", "Carteira cheia!");
     return;
   }
-  entity.dead = true;
+  coin.dead = true;
   emitter.emit("wallet:changed");
   emitter.emit("ping", "Moeda +1");
 }
 
-function pickupPlaced(state, entity, emitter) {
-  if (!entity.placedId) return;
-  const ok = state.inventory.add(entity.placedId, 1);
-  if (!ok) {
-    emitter.emit("toast", "Inventário cheio!");
-    return;
-  }
-  entity.dead = true;
-  emitter.emit("inv:changed");
-  emitter.emit("ping", `${getName(entity.placedId)} recolhido`);
-}
-
-function pickupChest(state, entity, emitter) {
-  const ok = state.inventory.add("chest", 1, { inv: entity.inv });
+function pickupChest(state, chest, emitter) {
+  const ok = state.inventory.add("chest", 1, { inv: chest.inventory });
   if (!ok) {
     emitter.emit("toast", "Sem espaço para o baú");
     return;
   }
-  entity.dead = true;
+  chest.dead = true;
   emitter.emit("chest:close");
   emitter.emit("inv:changed");
   emitter.emit("ping", "Baú recolhido");
 }
 
-function breakTree(state, entity, emitter, toolId) {
-  if (toolId && hasTag(toolId, "chop")) {
-    entity.hp = Math.max(0, (entity.hp || 5) - 1);
-    emitter.emit("ping", `Machado na árvore: HP ${entity.hp}`);
-    if (entity.hp <= 0) {
-      for (let i = 0; i < 8; i++) spawnDrop(state, "wood", entity.x, entity.y);
-      const saplings = Math.random() < 0.5 ? 1 : 3;
-      for (let i = 0; i < saplings; i++) spawnDrop(state, "sapling", entity.x, entity.y);
-      if (Math.random() < 0.4) spawnDrop(state, "stick", entity.x, entity.y, { qty: 2 });
-      entity.dead = true;
-    }
-  } else {
-    entity.taps = (entity.taps || 0) + 1;
-    if (entity.taps % 10 === 0) {
-      spawnDrop(state, "stick", entity.x, entity.y);
-      emitter.emit("ping", "Graveto conseguido!");
-    } else {
-      emitter.emit("ping", `Continue batendo… faltam ${10 - (entity.taps % 10)} golpes`);
+function damageMultiplier() {
+  const effects = getHungerState().effects;
+  let mult = 1;
+  if (effects.has("strength")) mult *= 1.25;
+  if (effects.has("weakness")) mult *= 0.7;
+  return mult;
+}
+
+function handleTreeInteraction(state, tree, emitter, toolId) {
+  applyActionGroup("break", 1);
+  tree.interact({
+    toolId,
+    spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+    emitter,
+  });
+}
+
+function handleRockInteraction(state, rock, emitter, toolId) {
+  applyActionGroup("break", 1);
+  rock.interact({
+    toolId,
+    spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+    emitter,
+    damageMultiplier: damageMultiplier(),
+  });
+}
+
+function chainFear(state, source, threat) {
+  for (const ent of state.entities) {
+    if (ent === source || ent.dead) continue;
+    if (!(ent instanceof Cow)) continue;
+    const dist = Math.hypot(ent.x - source.x, ent.y - source.y);
+    if (dist <= COW_CHAIN_RADIUS) {
+      ent.triggerFlee(threat);
     }
   }
 }
 
-function breakRock(state, entity, emitter, toolId) {
-  const dmg = toolId && hasTag(toolId, "mine") ? 5 : 2;
-  entity.hp = Math.max(0, (entity.hp || 20) - dmg);
-  emitter.emit("ping", `Rocha: HP ${entity.hp}`);
-  if (entity.hp <= 0) {
-    const shards = 1 + Math.floor(Math.random() * 3);
-    spawnDrop(state, "rockshard", entity.x, entity.y, { qty: shards });
-    if (Math.random() < 0.5) spawnDrop(state, "coal", entity.x, entity.y);
-    entity.dead = true;
-  }
-}
-
-function attackCow(state, entity, emitter, toolId) {
-  const dmg = toolId && hasTag(toolId, "weapon") ? 2 : 1;
-  entity.hp = Math.max(0, (entity.hp || 3) - dmg);
-  entity.fleeUntil = performance.now() + 6000;
-  if (entity.hp <= 0) {
-    spawnDrop(state, "beef", entity.x, entity.y, { qty: 4 });
-    spawnDrop(state, "leather", entity.x, entity.y, { qty: 2 });
-    spawnDrop(state, "bone", entity.x, entity.y, { qty: 3 });
-    entity.dead = true;
-    emitter.emit("ping", "Vaca abatida");
-  } else {
+function attackCow(state, cow, emitter, toolId) {
+  applyActionGroup("attack", 1);
+  const base = toolId && hasTag(toolId, "weapon") ? 2 : 1;
+  const dmg = Math.max(1, Math.round(base * damageMultiplier()));
+  cow.takeDamage(dmg, { x: state.player.x, y: state.player.y }, {
+    emitter,
+    spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+    spawnEffect: (type, opts) => spawnEffect(state, type, opts),
+    player: state.player,
+    chainFear: (src, threat) => chainFear(state, src, threat),
+  });
+  if (!cow.dead) {
     emitter.emit("ping", "A vaca foge!");
   }
 }
 
-function canPlace(state, gx, gy) {
-  return !state.entities.some(
-    (ent) =>
-      isSolid(ent) && Math.hypot(ent.x - gx, ent.y - gy) < (ent.r || 14) + 4
-  );
+function handleCampfireInteraction(campfire, emitter) {
+  if (!campfire.isCooking()) {
+    emitter.emit("toast", "Use o botão direito com carne crua equipada");
+  }
 }
 
 function placeFromHand(state, emitter, worldX, worldY) {
   const id = state.player.hand;
   if (!id) return;
-  const snapped = snapToTile(worldX, worldY);
-  const gx = clamp(snapped.x, 40, state.world.w - 40);
-  const gy = clamp(snapped.y, 40, state.world.h - 40);
+  if (!isPlaceable(id)) {
+    emitter.emit("toast", "Este item não pode ser colocado");
+    return;
+  }
 
-  if (!canPlace(state, gx, gy)) {
+  const snapped = snapToTile(worldX, worldY);
+  const { x, y } = clampPosition(state, snapped.x, snapped.y);
+  if (collides(state, x, y)) {
     emitter.emit("toast", "Espaço ocupado");
     return;
   }
@@ -295,34 +290,19 @@ function placeFromHand(state, emitter, worldX, worldY) {
     return;
   }
 
+  let placed = null;
   if (id === "sapling") {
-    state.entities.push(
-      withId({ type: "tree", x: gx, y: gy, r: placeSpec("sapling").radius, hp: 5, taps: 0 })
-    );
-    emitter.emit("ping", "Muda plantada");
-  } else if (id === "chest") {
-    const inventory = item.meta?.inv || makeInventory(18);
-    state.entities.push(
-      withId({ type: "chest", x: gx, y: gy, r: placeSpec("chest").radius, inv: inventory })
-    );
-    emitter.emit("ping", "Baú posicionado");
+    placed = new Tree({ x, y, hp: 5 });
   } else if (id === "campfire") {
-    state.entities.push(
-      withId({
-        type: "campfire",
-        x: gx,
-        y: gy,
-        r: placeSpec("campfire").radius,
-        cooking: 0,
-        doneAt: 0,
-      })
-    );
-    emitter.emit("ping", "Fogueira montada");
+    placed = new Campfire({ x, y });
+  } else if (id === "chest") {
+    placed = new Chest({ x, y, inventory: item.meta?.inv || makeInventory(18) });
   } else {
-    const solid = hasTag(id, "solid");
-    state.entities.push(
-      withId({ type: "placed", placedId: id, solid, x: gx, y: gy, r: 14 })
-    );
+    placed = new DisplayProp({ x, y, itemId: id });
+  }
+
+  if (placed) {
+    addEntity(state, placed);
     emitter.emit("ping", `${getName(id)} colocado`);
   }
 
@@ -332,8 +312,45 @@ function placeFromHand(state, emitter, worldX, worldY) {
   emitter.emit("inv:changed");
 }
 
+function mouseWorldFromScreen(state, sx, sy) {
+  const canvas = document.getElementById("game");
+  if (!canvas) return { x: state.player.x, y: state.player.y };
+  const camX = clamp(
+    state.player.x - canvas.width / 2,
+    0,
+    state.world.w - canvas.width
+  );
+  const camY = clamp(
+    state.player.y - canvas.height / 2,
+    0,
+    state.world.h - canvas.height
+  );
+  return { x: camX + sx, y: camY + sy };
+}
+
+function consumeFromHand(state, emitter) {
+  const id = state.player.hand;
+  if (!id) return false;
+  const item = getItem(id);
+  if (!item || !(item.tags || []).includes("food")) return false;
+  const taken = state.inventory.takeOne(id);
+  if (!taken) return false;
+  emitter.emit("player:consume", { foodId: id });
+  applyFood(id);
+  emitter.emit("ping", `${getName(id)} consumido`);
+  if (state.inventory.count(id) <= 0) {
+    state.player.hand = null;
+  }
+  emitter.emit("inv:changed");
+  return true;
+}
+
 function cookOnCampfire(state, emitter, campfire) {
-  if (campfire.cooking) {
+  if (!campfire.canCook("beef")) {
+    emitter.emit("toast", "Nada para cozinhar");
+    return;
+  }
+  if (campfire.isCooking()) {
     emitter.emit("toast", "A fogueira já está cozinhando");
     return;
   }
@@ -342,21 +359,13 @@ function cookOnCampfire(state, emitter, campfire) {
     emitter.emit("toast", "Precisa de 1 carne crua");
     return;
   }
-  campfire.cooking = 1;
-  campfire.doneAt = performance.now() + 30000;
-  emitter.emit("ping", "Carne cozinhando (30s)");
   if (state.inventory.count("beef") <= 0 && state.player.hand === "beef") {
     state.player.hand = null;
   }
+  campfire.startCooking("beef", {
+    emitter,
+  });
   emitter.emit("inv:changed");
-}
-
-function mouseWorldFromScreen(state, sx, sy) {
-  const canvas = document.getElementById("game");
-  if (!canvas) return { x: state.player.x, y: state.player.y };
-  const camX = clamp(state.player.x - canvas.width / 2, 0, state.world.w - canvas.width);
-  const camY = clamp(state.player.y - canvas.height / 2, 0, state.world.h - canvas.height);
-  return { x: camX + sx, y: camY + sy };
 }
 
 function dropFromHand(state, emitter) {
@@ -364,7 +373,7 @@ function dropFromHand(state, emitter) {
   if (!id) return;
   const item = state.inventory.takeOne(id);
   if (!item) return;
-  spawnDrop(state, id, state.player.x, state.player.y, { meta: item.meta || null });
+  spawnDrop(state, id, { x: state.player.x, y: state.player.y, meta: item.meta || null });
   emitter.emit("ping", `${getName(id)} dropado`);
   if (state.inventory.count(id) <= 0) state.player.hand = null;
   emitter.emit("inv:changed");
@@ -376,7 +385,7 @@ function dropFromInventory(state, emitter, id) {
     emitter.emit("toast", "Você não tem esse item");
     return;
   }
-  spawnDrop(state, id, state.player.x, state.player.y, { meta: item.meta || null });
+  spawnDrop(state, id, { x: state.player.x, y: state.player.y, meta: item.meta || null });
   emitter.emit("ping", `${getName(id)} dropado`);
   if (state.player.hand === id && state.inventory.count(id) <= 0) state.player.hand = null;
   emitter.emit("inv:changed");
@@ -385,37 +394,56 @@ function dropFromInventory(state, emitter, id) {
 function handlePrimaryAction(state, emitter) {
   const { entity, distance } = getInteractionTarget(state);
   if (!entity || distance > INTERACT_RANGE) return;
-
-  if (entity.type === "item") return pickupItem(state, entity, emitter);
-  if (entity.type === "coin") return pickupCoin(state, entity, emitter);
-  if (entity.type === "placed") return pickupPlaced(state, entity, emitter);
-  if (entity.type === "chest") return pickupChest(state, entity, emitter);
-  if (entity.type === "tree") return breakTree(state, entity, emitter, state.player.hand);
-  if (entity.type === "rock") return breakRock(state, entity, emitter, state.player.hand);
-  if (entity.type === "cow") return attackCow(state, entity, emitter, state.player.hand);
-  if (entity.type === "campfire") {
-    if (!entity.cooking) {
-      emitter.emit("toast", "Use o botão direito com carne crua equipada");
+  if (entity instanceof ItemDrop) return pickupItem(state, entity, emitter);
+  if (entity instanceof Coin) return pickupCoin(state, entity, emitter);
+  if (entity instanceof Chest) return pickupChest(state, entity, emitter);
+  if (entity instanceof Tree) return handleTreeInteraction(state, entity, emitter, state.player.hand);
+  if (entity instanceof Rock) return handleRockInteraction(state, entity, emitter, state.player.hand);
+  if (entity instanceof Cow) return attackCow(state, entity, emitter, state.player.hand);
+  if (entity instanceof Campfire) {
+    const toolId = state.player.hand;
+    if (toolId && (hasTag(toolId, "chop") || hasTag(toolId, "mine") || hasTag(toolId, "weapon"))) {
+      applyActionGroup("break", 1);
+      const broken = entity.break({
+        spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+        emitter,
+      });
+      if (broken) emitter.emit("ping", "Fogueira desmontada");
+      return;
     }
+    return handleCampfireInteraction(entity, emitter);
+  }
+  if (entity instanceof BerryBush || entity instanceof NutTree) {
+    entity.interact({
+      toolId: state.player.hand,
+      spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+      emitter,
+    });
   }
 }
 
 function handleSecondaryAction(state, emitter, payload) {
-  const chestNear = findNearest(state, (ent) => ent.type === "chest");
+  const chestNear = findNearest(state, (ent) => ent instanceof Chest);
   if (chestNear.entity && chestNear.distance <= INTERACT_RANGE) {
     emitter.emit("chest:open", chestNear.entity);
     return;
   }
 
-  if (state.player.hand === "beef") {
-    const fire = findNearest(state, (ent) => ent.type === "campfire");
+  const handId = state.player.hand;
+  if (handId === "beef") {
+    const fire = findNearest(state, (ent) => ent instanceof Campfire);
     if (fire.entity && fire.distance <= INTERACT_RANGE) {
       cookOnCampfire(state, emitter, fire.entity);
       return;
     }
   }
 
-  if (!state.player.hand) return;
+  if (handId) {
+    const consumed = consumeFromHand(state, emitter);
+    if (consumed) return;
+  }
+
+  if (!handId) return;
   const { sx = 0, sy = 0 } = payload || {};
   const worldPos = mouseWorldFromScreen(state, sx, sy);
   placeFromHand(state, emitter, worldPos.x, worldPos.y);
@@ -426,64 +454,81 @@ function updateFocus(state) {
   state.player.focusId = entity && distance <= INTERACT_RANGE ? entity.id : null;
 }
 
-function autopickNearby(state, emitter) {
-  const { player } = state;
-  for (const ent of state.entities) {
-    if (ent.dead) continue;
-    const dist = Math.hypot(ent.x - player.x, ent.y - player.y);
-    if (dist > AUTOPICK_RADIUS) continue;
-    if (ent.type === "item") pickupItem(state, ent, emitter);
-    if (ent.type === "coin") pickupCoin(state, ent, emitter);
+function countEntities(state, kind) {
+  return state.entities.filter((ent) => !ent.dead && ent.kind === kind).length;
+}
+
+function findSpawnSpot(state, minSpacing = 96) {
+  for (let i = 0; i < 40; i++) {
+    const x = randBetween(120, state.world.w - 120);
+    const y = randBetween(120, state.world.h - 120);
+    let ok = true;
+    for (const ent of state.entities) {
+      if (ent.dead) continue;
+      const radius = (ent.radius || 16) + minSpacing;
+      if (Math.hypot(ent.x - x, ent.y - y) < radius) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return snapToTile(x, y);
   }
+  return null;
 }
 
 function updateEntities(state, dt, emitter) {
-  const now = performance.now();
-  const { player } = state;
+  const context = {
+    clampPosition: (x, y) => clampPosition(state, x, y),
+    spawnDrop: (id, opts) => spawnDrop(state, id, opts),
+    spawnEffect: (type, opts) => spawnEffect(state, type, opts),
+    emitter,
+    player: state.player,
+    chainFear: (src, threat) => chainFear(state, src, threat),
+  };
 
   for (const ent of state.entities) {
-    if (ent.dead) continue;
-
-    if (ent.type === "item" && ent.expiresAt && now > ent.expiresAt) {
-      ent.dead = true;
-      continue;
-    }
-
-    if (ent.type === "campfire" && ent.cooking && now >= ent.doneAt) {
-      ent.cooking = 0;
-      spawnDrop(state, "cookedbeef", ent.x, ent.y - 18, { ttl: 240000 });
-      emitter.emit("ping", "Carne pronta!");
-    }
-
-    if (ent.type === "cow") {
-      if (now < (ent.fleeUntil || 0)) {
-        const ax = ent.x - player.x;
-        const ay = ent.y - player.y;
-        const L = Math.hypot(ax, ay) || 1;
-        const speed = 120 * dt;
-        ent.x = clamp(ent.x + (ax / L) * speed, 24, state.world.w - 24);
-        ent.y = clamp(ent.y + (ay / L) * speed, 24, state.world.h - 24);
-      } else if (Math.random() < 0.02) {
-        ent.x = clamp(ent.x + (Math.random() * 2 - 1) * 30 * dt, 24, state.world.w - 24);
-        ent.y = clamp(ent.y + (Math.random() * 2 - 1) * 30 * dt, 24, state.world.h - 24);
-      }
-    }
+    if (ent.dead || typeof ent.update !== "function") continue;
+    ent.update(dt, context);
   }
 
-  autopickNearby(state, emitter);
-  updateFocus(state);
   state.entities = state.entities.filter((ent) => !ent.dead);
 }
 
+function applyMovementCosts(state, moved, running, dt) {
+  if (!moved) return;
+  if (running) {
+    applyActionGroup("run", dt);
+  } else {
+    applyActionGroup("walk", dt);
+  }
+}
+
 function movePlayer(state, dt) {
-  const { player, world } = state;
-  const dir = player.moveDir || { dx: 0, dy: 0 };
-  const speed = player.speed || 210;
+  const { player } = state;
+  const dir = player.moveDir || { dx: 0, dy: 0, sprint: false };
+  const magnitude = Math.hypot(dir.dx || 0, dir.dy || 0);
+  if (magnitude <= 0.001) return { moved: false, running: false };
+
+  let speed = player.speed || 210;
+  if (hasEffect("slow")) {
+    speed *= SLOW_MULTIPLIER;
+  }
+
+  let running = false;
+  const hunger = getHungerState();
+  if ((dir.sprint || state.input?.dir?.sprint) && hunger.stamina >= STAMINA.minToStartSprint) {
+    running = true;
+    speed *= SPRINT_MULTIPLIER * getSprintMultiplier();
+  }
+
   const vx = (dir.dx || 0) * speed * dt;
   const vy = (dir.dy || 0) * speed * dt;
 
-  const nextX = clamp(player.x + vx, PLAYER_RADIUS, world.w - PLAYER_RADIUS);
-  const nextY = clamp(player.y + vy, PLAYER_RADIUS, world.h - PLAYER_RADIUS);
+  let nextX = player.x + vx;
+  let nextY = player.y + vy;
+  const clamped = clampPosition(state, nextX, nextY);
+  nextX = clamped.x;
+  nextY = clamped.y;
 
   if (!collides(state, nextX, player.y)) player.x = nextX;
   if (!collides(state, player.x, nextY)) player.y = nextY;
@@ -494,6 +539,57 @@ function movePlayer(state, dt) {
   } else if (Math.abs(vy) > 0.001) {
     player.dir = vy > 0 ? "down" : "up";
   }
+
+  return { moved: true, running };
+}
+
+function populateWorld(state) {
+  state.entities = [];
+  const { world } = state;
+
+  for (let i = 0; i < 18; i++) {
+    const pos = snapToTile(randBetween(160, world.w - 160), randBetween(160, world.h - 160));
+    spawnCoin(state, pos.x, pos.y);
+  }
+
+  for (let i = 0; i < 28; i++) {
+    const pos = snapToTile(randBetween(120, world.w - 120), randBetween(120, world.h - 120));
+    spawnTree(state, pos.x, pos.y);
+  }
+
+  for (let i = 0; i < 20; i++) {
+    const pos = snapToTile(randBetween(220, world.w - 220), randBetween(220, world.h - 220));
+    spawnRock(state, pos.x, pos.y);
+  }
+
+  for (let i = 0; i < 6; i++) {
+    const pos = snapToTile(randBetween(180, world.w - 180), randBetween(180, world.h - 180));
+    spawnCow(state, pos.x, pos.y);
+  }
+
+  const campfireSpot = snapToTile(world.w / 2 + 120, world.h / 2 + 100);
+  spawnCampfire(state, campfireSpot.x, campfireSpot.y);
+
+  const chestSpot = snapToTile(world.w / 2 + 200, world.h / 2 - 60);
+  const chestInventory = makeInventory(18);
+  chestInventory.add("wood", 10);
+  chestInventory.add("rockshard", 6);
+  chestInventory.add("coin", 12);
+  spawnChest(state, chestSpot.x, chestSpot.y, chestInventory);
+
+  const axeSpot = snapToTile(world.w / 2 - 100, world.h / 2);
+  spawnDrop(state, "axe", { x: axeSpot.x, y: axeSpot.y, ttl: 600000 });
+
+  for (let i = 0; i < 3; i++) {
+    const pos = snapToTile(world.w / 2 - 80 + i * 22, world.h / 2 + 80);
+    spawnDrop(state, "sapling", { x: pos.x, y: pos.y, ttl: 600000 });
+  }
+
+  populateNaturalSpawns(state, {
+    spawn: (entity) => addEntity(state, entity),
+    count: (kind) => countEntities(state, kind),
+    findSpot: (spacing) => findSpawnSpot(state, spacing),
+  });
 }
 
 function bindWorldEvents(state, emitter) {
@@ -511,20 +607,30 @@ function bindWorldEvents(state, emitter) {
   emitter.on("player:dropHandOne", () => dropFromHand(state, emitter));
   emitter.on("inventory:dropOne", ({ id }) => dropFromInventory(state, emitter, id));
   emitter.on("world:drop", ({ id, qty = 1, meta = null }) => {
-    spawnDrop(state, id, state.player.x, state.player.y, { qty, meta });
+    spawnDrop(state, id, { qty, meta, x: state.player.x, y: state.player.y });
   });
 }
 
 export function spawnInitialWorld(state, emitter) {
   ensurePlayerDefaults(state);
-  generateWorld(state);
+  initHunger(emitter);
+  populateWorld(state);
   bindWorldEvents(state, emitter);
 }
 
 export function updateWorld(state, dt, emitter) {
   const frameDt = Math.min(dt || 0, 0.05);
-  movePlayer(state, frameDt);
+  applyActionGroup("time:tick", frameDt);
+  const movement = movePlayer(state, frameDt);
+  applyMovementCosts(state, movement.moved, movement.running, frameDt);
   updateEntities(state, frameDt, emitter);
+  updateFocus(state);
+  updateNaturalSpawns(state, frameDt * 1000, {
+    spawn: (entity) => addEntity(state, entity),
+    count: (kind) => countEntities(state, kind),
+    findSpot: (spacing) => findSpawnSpot(state, spacing),
+  });
+  hungerTick(frameDt * 1000);
 }
 
 export function returnCraftingToInventory(state, emitter) {
@@ -541,14 +647,17 @@ export function returnCraftingToInventory(state, emitter) {
     const inserted = after - before;
     const leftover = qty - inserted;
     if (!success && leftover > 0) {
-      spawnDrop(state, id, state.player.x, state.player.y, { qty: leftover });
+      spawnDrop(state, id, { qty: leftover, x: state.player.x, y: state.player.y });
       dropped = true;
     }
   }
 
   emitter.emit("craft:changed");
   emitter.emit("inv:changed");
-  emitter.emit(dropped ? "toast" : "ping", dropped ? "Inventário cheio — itens dropados" : "Itens devolvidos ao inventário");
+  emitter.emit(
+    dropped ? "toast" : "ping",
+    dropped ? "Inventário cheio — itens dropados" : "Itens devolvidos ao inventário"
+  );
 }
 
 export { spawnDrop };

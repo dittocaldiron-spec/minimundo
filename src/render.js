@@ -1,6 +1,7 @@
 // src/render.js
 import emitter from "./utils/events.js";
 import { getName } from "./items.js";
+import { isBlurActive } from "./systems/hunger.js";
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -64,141 +65,85 @@ function drawPlayer(ctx, player, cam) {
   ctx.fillRect(x - player.w / 2, y - player.h / 2, player.w, player.h);
 }
 
-function drawTree(ctx, ent, cam) {
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y;
-  ctx.fillStyle = "#1e293b";
-  ctx.fillRect(x - 6, y, 12, ent.r);
-  ctx.fillStyle = "#10b981";
-  ctx.beginPath();
-  ctx.arc(x, y, ent.r + 10, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawRock(ctx, ent, cam) {
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y;
-  ctx.fillStyle = "#94a3b8";
-  ctx.beginPath();
-  ctx.arc(x, y, ent.r, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawCoin(ctx, ent, cam) {
-  const t = performance.now() / 400;
-  const bob = Math.sin(t + (ent.x + ent.y) * 0.001) * 2;
-  ctx.fillStyle = "#fbbf24";
-  ctx.beginPath();
-  ctx.arc(ent.x - cam.x, ent.y - cam.y + bob, ent.r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#a16207";
-  ctx.stroke();
-}
-
-function drawItem(ctx, ent, cam) {
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y;
-  ctx.fillStyle = "#fde68a";
-  ctx.beginPath();
-  ctx.arc(x, y, 7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(30,64,175,.6)";
-  ctx.stroke();
-}
-
-function drawChest(ctx, ent, cam) {
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y;
-  ctx.fillStyle = "#b45309";
-  ctx.fillRect(x - 16, y - 12, 32, 24);
-  ctx.strokeStyle = "#78350f";
-  ctx.strokeRect(x - 16, y - 12, 32, 24);
-}
-
-function drawCampfire(ctx, ent, cam) {
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y;
-  ctx.fillStyle = "#7c2d12";
-  ctx.fillRect(x - 14, y - 6, 28, 12);
-  ctx.fillStyle = "#ea580c";
-  const t = performance.now() / 300;
-  const h = 8 + Math.sin(t + (x + y) * 0.01) * 2;
-  ctx.beginPath();
-  ctx.moveTo(x, y - h - 4);
-  ctx.lineTo(x - 6, y + 2);
-  ctx.lineTo(x + 6, y + 2);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawCow(ctx, ent, cam) {
-  const t = performance.now() / 500;
-  const bob = Math.sin(t + (ent.x + ent.y) * 0.002) * 1.5;
-  const x = ent.x - cam.x;
-  const y = ent.y - cam.y + bob;
-  ctx.fillStyle = "#9ca3af";
-  ctx.fillRect(x - 12, y - 10, 24, 16);
-  ctx.fillStyle = "#6b7280";
-  ctx.fillRect(x - 14, y - 8, 8, 6);
-  ctx.fillRect(x + 6, y - 8, 8, 6);
-}
-
 function drawFocus(ctx, ent, cam) {
   if (!ent) return;
   const x = ent.x - cam.x;
   const y = ent.y - cam.y;
+  const radius = ent.radius ?? ent.r ?? 16;
   ctx.save();
   ctx.strokeStyle = "rgba(14,165,233,0.85)";
   ctx.lineWidth = 2;
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.arc(x, y, (ent.r || 16) + 6, 0, Math.PI * 2);
+  ctx.arc(x, y, radius + 6, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
 
 function entityLabel(ent) {
   if (!ent) return "";
-  switch (ent.type) {
-    case "item":
-      return getName(ent.itemId);
-    case "placed":
-      return getName(ent.placedId);
-    case "coin":
-      return "Moeda";
-    case "tree":
-      return "Árvore";
-    case "rock":
-      return "Rocha";
-    case "cow":
-      return "Vaca";
-    case "campfire":
-      return "Fogueira";
-    case "chest":
-      return "Baú";
-    default:
-      return ent.type;
+  const kind = ent.kind || "";
+  const labels = ent.labels || new Set();
+  if (labels.has("effect") || kind.startsWith("effect.")) return "";
+
+  if (kind === "item.coin" || labels.has("coin")) {
+    return "Moeda";
   }
+  if (kind === "item.drop" || labels.has("drop")) {
+    const base = getName(ent.itemId);
+    return ent.qty > 1 ? `${base} x${ent.qty}` : base;
+  }
+  if (kind === "prop.tree" || labels.has("tree")) return "Árvore";
+  if (kind === "prop.nut-tree" || labels.has("nut-tree")) return "Nogueira";
+  if (kind === "prop.berry-bush" || labels.has("berry-bush")) return "Moita de Berries";
+  if (kind === "prop.rock" || labels.has("rock")) return "Rocha";
+  if (kind === "prop.chest" || labels.has("chest")) return "Baú";
+  if (kind === "prop.campfire" || labels.has("campfire")) {
+    const cooking = typeof ent.isCooking === "function" && ent.isCooking();
+    return cooking ? "Fogueira (cozinhando)" : "Fogueira";
+  }
+  if (kind.startsWith("prop.display")) return getName(ent.itemId);
+  if (kind === "creature.cow" || labels.has("cow")) return "Vaca";
+  return kind;
 }
 
 function drawFocusLabel(ctx, ent, canvas) {
-  if (!ent) return;
   const name = entityLabel(ent);
+  if (!name) return;
   ctx.save();
+  const width = 280;
+  const height = 32;
+  const x = canvas.width / 2 - width / 2;
+  const y = canvas.height - height - 16;
   ctx.fillStyle = "rgba(15,23,42,0.75)";
-  ctx.fillRect(canvas.width / 2 - 140, canvas.height - 48, 280, 32);
+  ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "rgba(148,163,184,0.4)";
-  ctx.strokeRect(canvas.width / 2 - 140, canvas.height - 48, 280, 32);
+  ctx.strokeRect(x, y, width, height);
   ctx.fillStyle = "#e2e8f0";
   ctx.font = "13px system-ui,sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(name, canvas.width / 2, canvas.height - 32);
+  ctx.fillText(name, canvas.width / 2, y + height / 2);
   ctx.restore();
+}
+
+function renderEntities(ctx, entities, cam, focusId) {
+  let focusEntity = null;
+  for (const ent of entities || []) {
+    if (!ent || ent.dead) continue;
+    if (focusId && ent.id === focusId) {
+      focusEntity = ent;
+    }
+    if (typeof ent.render === "function") {
+      ent.render(ctx, cam);
+    }
+  }
+  return focusEntity;
 }
 
 let pulseT = 0;
 let pulseMsg = "";
+
 emitter.on("ping", (message) => {
   pulseMsg = message;
   pulseT = 1.5;
@@ -206,9 +151,11 @@ emitter.on("ping", (message) => {
 
 export function renderLoop(state, emitter, onTick) {
   const canvas = document.getElementById("game");
+  if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const cam = { x: 0, y: 0 };
   let last = performance.now();
+  let lastBlur = null;
 
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -218,48 +165,24 @@ export function renderLoop(state, emitter, onTick) {
       onTick(dt);
     }
 
-    const { world, player, entities } = state;
+    const { world, player } = state;
+    const entities = state.entities || [];
+    const width = canvas.width;
+    const height = canvas.height;
+    const maxX = Math.max(0, (world?.w || width) - width);
+    const maxY = Math.max(0, (world?.h || height) - height);
 
-    cam.x = clamp(player.x - canvas.width / 2, 0, world.w - canvas.width);
-    cam.y = clamp(player.y - canvas.height / 2, 0, world.h - canvas.height);
+    cam.x = clamp((player?.x || 0) - width / 2, 0, maxX);
+    cam.y = clamp((player?.y || 0) - height / 2, 0, maxY);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawBG(ctx, cam, canvas.width, canvas.height, world.tile);
+    ctx.clearRect(0, 0, width, height);
+    drawBG(ctx, cam, width, height, world?.tile || 32);
 
-    let focusEntity = null;
+    const focusEntity = renderEntities(ctx, entities, cam, player?.focusId);
 
-    for (const ent of entities) {
-      if (ent.dead) continue;
-      if (player.focusId && ent.id === player.focusId) focusEntity = ent;
-      switch (ent.type) {
-        case "tree":
-          drawTree(ctx, ent, cam);
-          break;
-        case "rock":
-          drawRock(ctx, ent, cam);
-          break;
-        case "coin":
-          drawCoin(ctx, ent, cam);
-          break;
-        case "item":
-          drawItem(ctx, ent, cam);
-          break;
-        case "chest":
-          drawChest(ctx, ent, cam);
-          break;
-        case "campfire":
-          drawCampfire(ctx, ent, cam);
-          break;
-        case "cow":
-          drawCow(ctx, ent, cam);
-          break;
-        case "placed":
-          drawItem(ctx, ent, cam);
-          break;
-      }
+    if (player) {
+      drawPlayer(ctx, player, cam);
     }
-
-    drawPlayer(ctx, player, cam);
     drawFocus(ctx, focusEntity, cam);
     drawFocusLabel(ctx, focusEntity, canvas);
 
@@ -268,16 +191,22 @@ export function renderLoop(state, emitter, onTick) {
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "rgba(10,15,25,.8)";
-      ctx.fillRect(canvas.width / 2 - 180, 20, 360, 34);
+      ctx.fillRect(width / 2 - 180, 20, 360, 34);
       ctx.strokeStyle = "rgba(125,211,252,.5)";
-      ctx.strokeRect(canvas.width / 2 - 180, 20, 360, 34);
+      ctx.strokeRect(width / 2 - 180, 20, 360, 34);
       ctx.fillStyle = "#e2f4ff";
       ctx.font = "14px system-ui,sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(pulseMsg, canvas.width / 2, 37);
+      ctx.fillText(pulseMsg, width / 2, 37);
       ctx.restore();
       pulseT = Math.max(0, pulseT - dt);
+    }
+
+    const blurActive = isBlurActive();
+    if (blurActive !== lastBlur) {
+      canvas.classList.toggle("is-blur", blurActive);
+      lastBlur = blurActive;
     }
 
     requestAnimationFrame(frame);

@@ -10,8 +10,30 @@ export const items = {
   coal:        { name: "Carvão",         maxStack: 100, tags: ["material", "noSolid"] },
 
   // Alimentos
-  beef:        { name: "Carne",          maxStack: 100, tags: ["food", "noSolid"] },
-  cookedbeef:  { name: "Carne Cozida",   maxStack: 100, tags: ["food", "noSolid"] },
+  beef: {
+    name: "Carne",
+    maxStack: 100,
+    tags: ["food", "noSolid"],
+    meta: { carbs: 0, protein: 14, fat: 10, calories: 120 },
+  },
+  cookedbeef: {
+    name: "Carne Cozida",
+    maxStack: 100,
+    tags: ["food", "noSolid"],
+    meta: { carbs: 0, protein: 18, fat: 12, calories: 160 },
+  },
+  berries: {
+    name: "Frutas Silvestres",
+    maxStack: 100,
+    tags: ["food", "noSolid"],
+    meta: { carbs: 18, protein: 2, fat: 1, calories: 60 },
+  },
+  nuts: {
+    name: "Nozes",
+    maxStack: 100,
+    tags: ["food", "noSolid"],
+    meta: { carbs: 8, protein: 7, fat: 20, calories: 200 },
+  },
 
   // Drops de mob
   leather:     { name: "Couro",          maxStack: 100, tags: ["material", "noSolid"] },

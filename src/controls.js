@@ -25,6 +25,7 @@ export function setupControls(state, emitter) {
     a: false,
     s: false,
     d: false,
+    shift: false,
   };
 
   state.input = state.input || {
@@ -32,6 +33,7 @@ export function setupControls(state, emitter) {
     a: false,
     s: false,
     d: false,
+    shift: false,
     pointer: { sx: 0, sy: 0 },
     dir: { dx: 0, dy: 0 },
   };
@@ -46,7 +48,7 @@ export function setupControls(state, emitter) {
     if (keys.a) dx -= 1;
     if (keys.d) dx += 1;
     const len = Math.hypot(dx, dy) || 1;
-    return { dx: dx / len, dy: dy / len };
+    return { dx: dx / len, dy: dy / len, sprint: keys.shift };
   }
 
   function canvasPointFromEvent(e) {
@@ -62,6 +64,7 @@ export function setupControls(state, emitter) {
     if (k === "a") keys.a = state.input.a = true;
     if (k === "s") keys.s = state.input.s = true;
     if (k === "d") keys.d = state.input.d = true;
+    if (k === "shift") keys.shift = state.input.shift = true;
 
     if (k === "e") emitter.emit("action:toggleInventory");
     if (k === "c") emitter.emit("action:toggleWallet");
@@ -75,6 +78,7 @@ export function setupControls(state, emitter) {
     if (k === "a") keys.a = state.input.a = false;
     if (k === "s") keys.s = state.input.s = false;
     if (k === "d") keys.d = state.input.d = false;
+    if (k === "shift") keys.shift = state.input.shift = false;
   }
 
   window.addEventListener("keydown", onKeyDown);

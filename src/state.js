@@ -146,7 +146,7 @@ export function initState() {
       focusId: null,
     },
     entities: [],
-    inventory: makeInventory(20),
+    inventory: makeInventory(16),
     wallet: makeInventory(8),
     crafting: makeCrafting(),
     input: {
