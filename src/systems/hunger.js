@@ -11,12 +11,15 @@ const state = {
   hunger: 80,
   stamina: HUNGER_CONSTANTS.staminaMax,
   effects: new Set(),
+  staminaCooldownMs: 0,
+  sprintDrainAccumulator: 0,
 };
 
 let busRef = null;
 let lastSnapshot = null;
 let blurTimerMs = 0;
 let blurVisible = false;
+let lastFatigueEvent = { active: false, remainingMs: 0, remainingSec: 0 };
 
 const activity = {
   running: false,
@@ -30,6 +33,12 @@ function cloneState() {
     stamina: state.stamina,
     hunger: state.hunger,
     effects: new Set(state.effects),
+    staminaCooldownMs: Math.max(0, state.staminaCooldownMs),
+    fatigue: {
+      active: isStaminaOnCooldown(),
+      remainingMs: Math.max(0, state.staminaCooldownMs),
+      remainingSec: Math.max(0, state.staminaCooldownMs) / 1000,
+    },
   };
 }
 
@@ -38,12 +47,18 @@ function emitStateChanged(force = false) {
   const snapshot = cloneState();
   if (!force && lastSnapshot) {
     const prev = lastSnapshot;
+    const prevFatigue = prev.fatigue || { active: false, remainingMs: 0 };
+    const nextFatigue = snapshot.fatigue || { active: false, remainingMs: 0 };
     const diff =
       Math.abs(prev.hunger - snapshot.hunger) > EPSILON ||
       Math.abs(prev.stamina - snapshot.stamina) > EPSILON ||
       Math.abs(prev.macros.carbs - snapshot.macros.carbs) > EPSILON ||
       Math.abs(prev.macros.protein - snapshot.macros.protein) > EPSILON ||
-      Math.abs(prev.macros.fat - snapshot.macros.fat) > EPSILON;
+      Math.abs(prev.macros.fat - snapshot.macros.fat) > EPSILON ||
+      Math.abs((prev.staminaCooldownMs || 0) - (snapshot.staminaCooldownMs || 0)) >
+        EPSILON ||
+      prevFatigue.active !== nextFatigue.active ||
+      Math.abs(prevFatigue.remainingMs - nextFatigue.remainingMs) > EPSILON;
     if (!diff) return;
   }
   lastSnapshot = snapshot;
@@ -56,6 +71,64 @@ function emitEffectsChanged(prevEffects) {
   const after = [...state.effects].sort().join(",");
   if (before === after) return;
   busRef.emit("effects:changed", { effects: new Set(state.effects) });
+}
+
+function getCooldownPayload() {
+  const remainingMs = Math.max(0, state.staminaCooldownMs);
+  return {
+    active: remainingMs > EPSILON,
+    remainingMs,
+    remainingSec: remainingMs / 1000,
+  };
+}
+
+function emitFatigueChanged(force = false) {
+  if (!busRef) return;
+  const payload = getCooldownPayload();
+  if (
+    !force &&
+    lastFatigueEvent.active === payload.active &&
+    Math.abs(lastFatigueEvent.remainingMs - payload.remainingMs) < 1
+  ) {
+    return;
+  }
+  lastFatigueEvent = { ...payload };
+  busRef.emit("stamina:fatigue", payload);
+}
+
+function startStaminaCooldown() {
+  const durationSec = STAMINA.cooldownDurationSec ?? 0;
+  const durationMs = Math.max(0, durationSec * 1000);
+  if (durationMs <= 0) return;
+  state.staminaCooldownMs = durationMs;
+  state.sprintDrainAccumulator = 0;
+  emitFatigueChanged(true);
+}
+
+function updateStaminaCooldown(dtMs) {
+  if (state.staminaCooldownMs <= 0) {
+    if (lastFatigueEvent.active) {
+      emitFatigueChanged();
+    }
+    return;
+  }
+  state.staminaCooldownMs = Math.max(0, state.staminaCooldownMs - dtMs);
+  if (state.staminaCooldownMs <= 0) {
+    state.sprintDrainAccumulator = 0;
+  }
+  emitFatigueChanged();
+}
+
+function decaySprintAccumulator(dt) {
+  if (state.sprintDrainAccumulator <= 0) return;
+  if (isStaminaOnCooldown()) return;
+  if (activity.running) return;
+  const rate = STAMINA.sprintDrainDecayPerSec || 0;
+  if (rate <= 0) return;
+  state.sprintDrainAccumulator = Math.max(
+    0,
+    state.sprintDrainAccumulator - rate * dt
+  );
 }
 
 function getMacroPercentage(macro) {
@@ -115,6 +188,10 @@ function recalcEffects() {
   const starving = shouldStarve();
   if (starving) {
     state.effects.add("starving");
+  }
+
+  if (isStaminaOnCooldown()) {
+    state.effects.add("fatigued");
   }
 
   emitEffectsChanged(prev);
@@ -205,6 +282,10 @@ function onPlayerConsume({ foodId }) {
 export function initHunger(bus) {
   busRef = bus;
   ensureBusListeners();
+  state.staminaCooldownMs = 0;
+  state.sprintDrainAccumulator = 0;
+  lastFatigueEvent = { active: false, remainingMs: 0, remainingSec: 0 };
+  emitFatigueChanged(true);
   emitStateChanged(true);
   emitEffectsChanged(new Set());
 }
@@ -215,6 +296,10 @@ export function getHungerState() {
 
 export function getSprintMultiplier() {
   return computeSprintMultiplier();
+}
+
+export function isStaminaOnCooldown() {
+  return state.staminaCooldownMs > EPSILON;
 }
 
 export function hasEffect(effect) {
@@ -297,11 +382,27 @@ export function applyActionCost(labelWithMod, context = {}) {
       HUNGER_CONSTANTS.hungerMax
     );
   } else if (label === "stamina") {
+    const previous = state.stamina;
     state.stamina = clamp(
       state.stamina - amount,
       0,
       HUNGER_CONSTANTS.staminaMax
     );
+    const drained = previous - state.stamina;
+    if (drained > EPSILON) {
+      if (previous > EPSILON && state.stamina <= EPSILON) {
+        startStaminaCooldown();
+      } else if (
+        action === "run" &&
+        !isStaminaOnCooldown() &&
+        (STAMINA.significantSprintDrain || 0) > 0
+      ) {
+        state.sprintDrainAccumulator += drained;
+        if (state.sprintDrainAccumulator >= STAMINA.significantSprintDrain) {
+          startStaminaCooldown();
+        }
+      }
+    }
   } else if (label.startsWith("macro.")) {
     const key = label.split(".")[1];
     if (key && state.macros[key] != null) {
@@ -322,8 +423,10 @@ export function applyActionGroup(action, scale = 1) {
 }
 
 export function tick(dtMs) {
-  const dt = Math.max(0, dtMs) / 1000;
-  if (!Number.isFinite(dt) || dt <= 0) {
+  const safeDtMs = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+  const dt = safeDtMs / 1000;
+  updateStaminaCooldown(safeDtMs);
+  if (dt <= 0) {
     updateBlur(dtMs);
     return;
   }
@@ -332,6 +435,7 @@ export function tick(dtMs) {
   recalcEffects();
   applyHungerDecay(dt);
   applyStaminaIdle(dt);
+  decaySprintAccumulator(dt);
   updateBlur(dtMs);
   emitStateChanged();
 

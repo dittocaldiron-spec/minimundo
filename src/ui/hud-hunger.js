@@ -10,6 +10,7 @@ const EFFECT_BADGES = {
   weakness: { text: "Weak", className: "effect-weakness" },
   saturation: { text: "Sat", className: "effect-saturation" },
   starving: { text: "Starv", className: "effect-starving" },
+  fatigued: { text: "Cansado", className: "effect-fatigue" },
 };
 
 function $(sel, root = document) {
@@ -49,7 +50,26 @@ function ensureContainer() {
     badges.className = "hud-hunger__badges";
     container.appendChild(badges);
   }
-  return { container, pizza, badges };
+  return { container, pizza, badges, fatigueBadge: null, lastFatiguePayload: null };
+}
+
+function formatFatigueText(payload) {
+  const base = EFFECT_BADGES.fatigued.text;
+  if (!payload || !payload.active) return base;
+  const seconds = Math.max(
+    0,
+    Math.ceil(
+      typeof payload.remainingSec === "number"
+        ? payload.remainingSec
+        : payload.remainingMs / 1000
+    )
+  );
+  return seconds > 0 ? `${base} (${seconds}s)` : base;
+}
+
+function syncFatigueBadge(dom) {
+  if (!dom?.fatigueBadge) return;
+  dom.fatigueBadge.textContent = formatFatigueText(dom.lastFatiguePayload);
 }
 
 function updateMacros(dom, state) {
@@ -67,14 +87,21 @@ function updateMacros(dom, state) {
 function updateBadges(dom, effects) {
   const set = new Set(effects || []);
   const entries = Object.entries(EFFECT_BADGES).filter(([key]) => set.has(key));
-  dom.badges.innerHTML = "";
-  entries.forEach(([, cfg]) => {
+  dom.badges.textContent = "";
+  dom.fatigueBadge = null;
+  entries.forEach(([key, cfg]) => {
     const span = document.createElement("span");
     span.className = `badge hud-hunger__badge ${cfg.className}`;
     span.textContent = cfg.text;
+    span.dataset.effect = key;
+    if (key === "fatigued") {
+      dom.fatigueBadge = span;
+    }
     dom.badges.appendChild(span);
   });
   dom.container.classList.toggle("hud-hunger--has-effects", entries.length > 0);
+  dom.container.classList.toggle("hud-hunger--fatigued", set.has("fatigued"));
+  syncFatigueBadge(dom);
 }
 
 export function setupHungerHUD(emitter) {
@@ -86,5 +113,23 @@ export function setupHungerHUD(emitter) {
 
   emitter.on("effects:changed", ({ effects }) => {
     updateBadges(dom, effects);
+  });
+
+  emitter.on("stamina:fatigue", (payload = {}) => {
+    dom.lastFatiguePayload = payload;
+    if (payload.active && !dom.fatigueBadge) {
+      const cfg = EFFECT_BADGES.fatigued;
+      const span = document.createElement("span");
+      span.className = `badge hud-hunger__badge ${cfg.className}`;
+      span.dataset.effect = "fatigued";
+      dom.badges.appendChild(span);
+      dom.fatigueBadge = span;
+    }
+    syncFatigueBadge(dom);
+    dom.container.classList.toggle("hud-hunger--fatigued", Boolean(payload.active));
+    dom.container.classList.toggle(
+      "hud-hunger--has-effects",
+      dom.badges.children.length > 0
+    );
   });
 }
