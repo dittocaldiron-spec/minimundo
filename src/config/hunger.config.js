@@ -44,3 +44,19 @@ export const HUNGER_CONSTANTS = {
   hungerMax: 100,
   staminaMax: 100,
 };
+
+export const HUD_HUNGER = {
+  macros: [
+    { key: "carbs", className: "carbs", label: "Carboidratos" },
+    { key: "protein", className: "protein", label: "Proteínas" },
+    { key: "fat", className: "fat", label: "Gorduras" },
+  ],
+  effectBadges: {
+    slow: { text: "Lento", className: "effect-slow" },
+    strength: { text: "Força", className: "effect-strength" },
+    weakness: { text: "Fraco", className: "effect-weakness" },
+    saturation: { text: "Saciado", className: "effect-saturation" },
+    starving: { text: "Faminto", className: "effect-starving" },
+    fatigued: { text: "Cansado", className: "effect-fatigue" },
+  },
+};

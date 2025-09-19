@@ -5,6 +5,173 @@ import { DECAY, MACRO_EFFECTS, STAMINA, HUNGER_CONSTANTS } from "../config/hunge
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const EPSILON = 0.0001;
 const CALORIES_TO_HUNGER = 0.5;
+const MACRO_KEYS = new Set(["carbs", "protein", "fat"]);
+const FOOD_STRING_PATTERN = /^(?:macro[.:])?([a-z\u00c0-\u017f]+)[^0-9+\-]*([+\-]?\d+(?:[.,]\d+)?)/i;
+
+function toFiniteNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().replace(/,/g, ".");
+    if (!normalized) return null;
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function detectStatKey(raw) {
+  if (typeof raw !== "string") return null;
+  let key = raw.trim().toLowerCase();
+  if (!key) return null;
+  key = key
+    .replace(/^macro[.:]/, "")
+    .replace(/^macros[.:]/, "")
+    .replace(/^stat[.:]/, "")
+    .replace(/^type[.:]/, "")
+    .replace(/^value[.:]/, "")
+    .replace(/[-_\s]/g, "");
+  if (!key) return null;
+  if (MACRO_KEYS.has(key)) return key;
+  if (key.includes("carb")) return "carbs";
+  if (key.includes("protein")) return "protein";
+  if (key === "fat" || key.includes("lipid")) return "fat";
+  if (key === "energy" || key.includes("stamina") || key.includes("energia")) return "stamina";
+  if (
+    key.includes("hunger") ||
+    key.includes("fome") ||
+    key.includes("satiety") ||
+    key.includes("saciado") ||
+    key.includes("fullness") ||
+    key === "restore" ||
+    key === "food" ||
+    key === "foods" ||
+    key === "restorehunger"
+  ) {
+    return "hunger";
+  }
+  if (key.includes("calor")) return "calories";
+  return null;
+}
+
+function applyStat(result, key, amount) {
+  const stat = detectStatKey(key);
+  if (!stat) return false;
+  const value = toFiniteNumber(amount);
+  if (value == null) return false;
+  if (MACRO_KEYS.has(stat)) {
+    result.macros[stat] = (result.macros[stat] || 0) + value;
+    return true;
+  }
+  if (stat === "hunger") {
+    result.hunger += value;
+    return true;
+  }
+  if (stat === "stamina") {
+    result.stamina += value;
+    return true;
+  }
+  if (stat === "calories") {
+    result.hunger += value * CALORIES_TO_HUNGER;
+    return true;
+  }
+  return false;
+}
+
+function parseStringEffect(str, result) {
+  if (typeof str !== "string") return false;
+  const match = str.trim().match(FOOD_STRING_PATTERN);
+  if (!match) return false;
+  const [, rawKey, rawValue] = match;
+  return applyStat(result, rawKey, rawValue);
+}
+
+function collectNutrition(source, result, visited = new Set()) {
+  if (source == null) return;
+  if (Array.isArray(source)) {
+    for (const entry of source) {
+      collectNutrition(entry, result, visited);
+    }
+    return;
+  }
+  if (typeof source === "number") {
+    result.hunger += source;
+    return;
+  }
+  if (typeof source === "string") {
+    if (!parseStringEffect(source, result)) {
+      const numeric = toFiniteNumber(source);
+      if (numeric != null) {
+        result.hunger += numeric;
+      }
+    }
+    return;
+  }
+  if (typeof source !== "object") return;
+  if (visited.has(source)) return;
+  visited.add(source);
+
+  const descriptorKey =
+    source.stat ??
+    source.type ??
+    source.kind ??
+    source.key ??
+    source.target ??
+    source.id ??
+    source.name ??
+    null;
+  const descriptorValue =
+    source.value ??
+    source.amount ??
+    source.delta ??
+    source.change ??
+    source.qty ??
+    source.quantity ??
+    source.points ??
+    source.magnitude ??
+    source.restore ??
+    null;
+  if (descriptorKey && descriptorValue != null) {
+    applyStat(result, descriptorKey, descriptorValue);
+  }
+
+  for (const [rawKey, value] of Object.entries(source)) {
+    if (applyStat(result, rawKey, value)) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        collectNutrition(entry, result, visited);
+      }
+      continue;
+    }
+    if (typeof value === "object" && value !== null) {
+      collectNutrition(value, result, visited);
+      continue;
+    }
+    if (typeof value === "string") {
+      if (parseStringEffect(value, result)) continue;
+      const numeric = toFiniteNumber(value);
+      if (numeric != null && detectStatKey(rawKey) === "hunger") {
+        result.hunger += numeric;
+      }
+    }
+  }
+}
+
+function normalizeFoodEffects(foodId, metaOverride) {
+  const result = { macros: {}, hunger: 0, stamina: 0 };
+  const visited = new Set();
+  if (metaOverride != null) {
+    collectNutrition(metaOverride, result, visited);
+  }
+  const item = foodId ? getItem(foodId) : null;
+  if (item?.meta && (!metaOverride || metaOverride !== item.meta)) {
+    collectNutrition(item.meta, result, visited);
+  }
+  return result;
+}
 
 const state = {
   macros: { carbs: 60, protein: 45, fat: 30 },
@@ -28,19 +195,33 @@ const activity = {
 };
 
 function cloneState() {
+  const fatigue = getCooldownPayload();
   return {
     macros: { ...state.macros },
     stamina: state.stamina,
     hunger: state.hunger,
     effects: new Set(state.effects),
-    staminaCooldownMs: Math.max(0, state.staminaCooldownMs),
-    fatigue: {
-      active: isStaminaOnCooldown(),
-      remainingMs: Math.max(0, state.staminaCooldownMs),
-      remainingSec: Math.max(0, state.staminaCooldownMs) / 1000,
-    },
-  };
-}
+// antes do return, calcule uma vez:
+const cooldownMs = Math.max(0, state.staminaCooldownMs);
+
+// se quiser manter o helper:
+const active = typeof isStaminaOnCooldown === 'function'
+  ? isStaminaOnCooldown()
+  : cooldownMs > 0;
+
+const fatigue = {
+  active,
+  remainingMs: cooldownMs,
+  remainingSec: cooldownMs / 1000,
+};
+
+// retorno final (remova os marcadores de conflito):
+return {
+  // ...outros campos
+  staminaCooldownMs: cooldownMs,
+  fatigue,
+};
+
 
 function emitStateChanged(force = false) {
   if (!busRef) return;
@@ -275,8 +456,12 @@ function ensureBusListeners() {
   busRef.on("player:consume", onPlayerConsume);
 }
 
-function onPlayerConsume({ foodId }) {
-  applyFood(foodId);
+function onPlayerConsume(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    applyFood(payload);
+    return;
+  }
+  applyFood(payload.foodId, payload.meta ?? payload);
 }
 
 export function initHunger(bus) {
@@ -285,6 +470,7 @@ export function initHunger(bus) {
   state.staminaCooldownMs = 0;
   state.sprintDrainAccumulator = 0;
   lastFatigueEvent = { active: false, remainingMs: 0, remainingSec: 0 };
+  lastSnapshot = null;
   emitFatigueChanged(true);
   emitStateChanged(true);
   emitEffectsChanged(new Set());
@@ -310,27 +496,40 @@ export function isBlurActive() {
   return blurVisible;
 }
 
-export function applyFood(foodId) {
-  const item = foodId ? getItem(foodId) : null;
-  const meta = item?.meta || {};
+export function applyFood(foodId, metaOverride = null) {
+  const effects = normalizeFoodEffects(foodId, metaOverride);
   let changed = false;
-  for (const macro of ["carbs", "protein", "fat"]) {
-    if (typeof meta[macro] === "number") {
-      state.macros[macro] = clamp(
-        state.macros[macro] + meta[macro],
-        0,
-        Infinity
-      );
+  for (const macro of MACRO_KEYS) {
+    const delta = effects.macros[macro];
+    if (!delta || Math.abs(delta) <= EPSILON) continue;
+    const previous = state.macros[macro] ?? 0;
+    const next = clamp(previous + delta, 0, Infinity);
+    if (Math.abs(next - previous) > EPSILON) {
+      state.macros[macro] = next;
       changed = true;
     }
   }
-  if (typeof meta.calories === "number") {
+  if (Math.abs(effects.hunger) > EPSILON) {
+    const previous = state.hunger;
     state.hunger = clamp(
-      state.hunger + meta.calories * CALORIES_TO_HUNGER,
+      previous + effects.hunger,
       0,
       HUNGER_CONSTANTS.hungerMax
     );
-    changed = true;
+    if (Math.abs(state.hunger - previous) > EPSILON) {
+      changed = true;
+    }
+  }
+  if (Math.abs(effects.stamina) > EPSILON) {
+    const previous = state.stamina;
+    state.stamina = clamp(
+      previous + effects.stamina,
+      0,
+      HUNGER_CONSTANTS.staminaMax
+    );
+    if (Math.abs(state.stamina - previous) > EPSILON) {
+      changed = true;
+    }
   }
   if (changed) {
     recalcEffects();
