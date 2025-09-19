@@ -1,9 +1,5 @@
-# Mini Mundo 2D
-
-Pequeno experimento de jogo top‑down escrito em JavaScript puro e empacotado com Parcel.
-Inclui um sistema básico de inventário, crafting com receitas, coleta automática de itens,
-interações com árvores, rochas, vacas, fogueiras e baús persistentes.
-
+# Mini Mundo 2D 
+Pequeno experimento de jogo 2D Isométrico escrito em JavaScript puro e empacotado com Parcel. Inclui manejo pessoal, comercial e industrial de inventário, crafting com receitas, profissões e árvores de conhecimento com xp, combate PvP e PvE, simulação de pecuária, caça, manejo do solo e preservação de biomas. Sistemas Políticos e Sociais complexos; sistema de reputação, urnas eleitorais, territórios, contratos e livre associação entre jogadores. Economia movida por players; mercado privado, instituições financeiras, empreendedorismo, emprego, linhas de produção, setor imobiliário, moeda, inflação. Transporte urbano e indústria mobilística, trens, metrôs, aviões, biciletas, ambulâncias, skates e taxis. Cultura e personalização, criação de personagem diversa e inclusiva, customização de vestimentas, arte, música e escrita. Combate em tempo real com armas realistas e magia baseada em karma, sorte e intuição. Ciclo de vida e reencarnação, você só tem uma vida.
 ## Como executar
 
 ```bash
@@ -27,6 +23,7 @@ npm run build
 - **E**: abrir/fechar inventário (também fecha baús).
 - **C**: abrir/fechar carteira.
 - **Q**: soltar 1 unidade do item equipado.
+- **Shift**: Sprint
 - **Alt + clique em slot**: soltar item diretamente do inventário.
 - **Esc**: fechar janelas abertas.
 
