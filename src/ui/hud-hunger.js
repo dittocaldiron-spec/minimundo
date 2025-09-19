@@ -6,12 +6,12 @@ const DEFAULT_MACROS = [
   { key: "fat", className: "fat", label: "Gorduras" },
 ];
 
-const DEFAULT_EFFECT_BADGES = {
-  slow: { text: "Lento", className: "effect-slow" },
-  strength: { text: "Força", className: "effect-strength" },
-  weakness: { text: "Fraco", className: "effect-weakness" },
-  saturation: { text: "Saciado", className: "effect-saturation" },
-  starving: { text: "Faminto", className: "effect-starving" },
+const EFFECT_BADGES = {
+  slow: { text: "Slow", className: "effect-slow" },
+  strength: { text: "Str", className: "effect-strength" },
+  weakness: { text: "Weak", className: "effect-weakness" },
+  saturation: { text: "Sat", className: "effect-saturation" },
+  starving: { text: "Starv", className: "effect-starving" },
   fatigued: { text: "Cansado", className: "effect-fatigue" },
 };
 

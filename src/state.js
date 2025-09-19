@@ -85,6 +85,29 @@ export function makeInventory(size = 24) {
       return null;
     },
 
+    takeAt(index, qty = 1) {
+      if (qty <= 0) return null;
+      if (!Number.isInteger(index)) return null;
+      if (index < 0 || index >= this.slots.length) return null;
+      const slot = this.slots[index];
+      if (!slot) return null;
+
+      if (slot.meta) {
+        this.slots[index] = null;
+        return { id: slot.id, qty: 1, meta: slot.meta };
+      }
+
+      const take = Math.min(qty, slot.qty);
+      if (take <= 0) return null;
+
+      const item = { id: slot.id, qty: take };
+      slot.qty -= take;
+      if (slot.qty <= 0) {
+        this.slots[index] = null;
+      }
+      return item;
+    },
+
     count(id) {
       if (!id) return 0;
       return this.slots.reduce((sum, slot) => {
@@ -142,6 +165,7 @@ export function initState() {
       dir: "down",
       speed: 210,
       hand: null,
+      hotbar: { size: 4, active: 0 },
       moveDir: { dx: 0, dy: 0 },
       focusId: null,
     },

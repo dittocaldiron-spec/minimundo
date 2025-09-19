@@ -201,10 +201,27 @@ function cloneState() {
     stamina: state.stamina,
     hunger: state.hunger,
     effects: new Set(state.effects),
-    staminaCooldownMs: fatigue.remainingMs,
-    fatigue,
-  };
-}
+// antes do return, calcule uma vez:
+const cooldownMs = Math.max(0, state.staminaCooldownMs);
+
+// se quiser manter o helper:
+const active = typeof isStaminaOnCooldown === 'function'
+  ? isStaminaOnCooldown()
+  : cooldownMs > 0;
+
+const fatigue = {
+  active,
+  remainingMs: cooldownMs,
+  remainingSec: cooldownMs / 1000,
+};
+
+// retorno final (remova os marcadores de conflito):
+return {
+  // ...outros campos
+  staminaCooldownMs: cooldownMs,
+  fatigue,
+};
+
 
 function emitStateChanged(force = false) {
   if (!busRef) return;
