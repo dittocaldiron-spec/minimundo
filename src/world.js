@@ -40,6 +40,7 @@ const INTERACT_RANGE = 56;
 const SLOW_MULTIPLIER = 0.7;
 const SPRINT_MULTIPLIER = 1.55;
 const COW_CHAIN_RADIUS = 220;
+const HOTBAR_SIZE = 4;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const randBetween = (min, max) => min + Math.random() * (max - min);
@@ -51,6 +52,97 @@ function snapToTile(x, y) {
   };
 }
 
+function ensureHotbarState(state) {
+  const { player } = state;
+  player.hotbar = player.hotbar || { size: HOTBAR_SIZE, active: 0 };
+  player.hotbar.size = HOTBAR_SIZE;
+
+  const slotsLength = state.inventory?.slots?.length ?? 0;
+  const maxIndex = Math.min(player.hotbar.size, slotsLength) - 1;
+  if (!Number.isInteger(player.hotbar.active)) {
+    player.hotbar.active = player.hotbar.active === null ? null : 0;
+  }
+  if (player.hotbar.active !== null && player.hotbar.active > maxIndex) {
+    player.hotbar.active = maxIndex >= 0 ? maxIndex : null;
+  }
+  if (player.hotbar.active !== null && player.hotbar.active < 0) {
+    player.hotbar.active = null;
+  }
+  return player.hotbar;
+}
+
+function getActiveHotbarSlot(state) {
+  const hotbar = ensureHotbarState(state);
+  return Number.isInteger(hotbar.active) ? hotbar.active : null;
+}
+
+function syncHotbarHand(state) {
+  const hotbar = ensureHotbarState(state);
+  const active = Number.isInteger(hotbar.active) ? hotbar.active : null;
+  const slot =
+    active !== null && Array.isArray(state.inventory?.slots)
+      ? state.inventory.slots[active] || null
+      : null;
+  const nextHand = slot ? slot.id : null;
+  if (state.player.hand !== nextHand) {
+    state.player.hand = nextHand;
+    return true;
+  }
+  return false;
+}
+
+function takeHotbarItem(state, { slot = getActiveHotbarSlot(state), qty = 1 } = {}) {
+  const hotbar = ensureHotbarState(state);
+  const slots = state.inventory?.slots || [];
+  let target = slot;
+
+  if (!Number.isInteger(target)) {
+    target = Number.isInteger(hotbar.active) ? hotbar.active : null;
+  }
+
+  if (target === null || target < 0 || target >= slots.length) {
+    const handChanged = syncHotbarHand(state);
+    return { item: null, handChanged, slot: target };
+  }
+
+  const item = state.inventory.takeAt(target, qty);
+  const handChanged = syncHotbarHand(state);
+  return { item, handChanged, slot: target };
+}
+
+function selectHotbarSlot(state, emitter, slot, { toggle = false } = {}) {
+  const hotbar = ensureHotbarState(state);
+  const current = Number.isInteger(hotbar.active) ? hotbar.active : null;
+  let next = current;
+
+  if (slot === null) {
+    next = null;
+  } else if (Number.isInteger(slot) && slot >= 0 && slot < hotbar.size) {
+    next = slot;
+  }
+
+  if (toggle && current === next) {
+    next = null;
+  }
+
+  if (current === next) {
+    const changed = syncHotbarHand(state);
+    if (changed && emitter)
+      emitter.emit("player:handChanged", { reason: "select", slot: hotbar.active ?? null });
+    return next;
+  }
+
+  hotbar.active = next;
+  const handChanged = syncHotbarHand(state);
+  if (emitter) {
+    emitter.emit("hotbar:changed", { active: next });
+    if (handChanged || next === null) {
+      emitter.emit("player:handChanged", { reason: "select", slot: next });
+    }
+  }
+  return next;
+}
+
 function ensurePlayerDefaults(state) {
   const { player, world } = state;
   player.x = player.x ?? world.w / 2;
@@ -59,6 +151,8 @@ function ensurePlayerDefaults(state) {
   player.h = player.h ?? 32;
   player.speed = player.speed ?? 210;
   player.hand = player.hand ?? null;
+  ensureHotbarState(state);
+  syncHotbarHand(state);
   player.moveDir = player.moveDir || { dx: 0, dy: 0, sprint: false };
   player.focusId = null;
 }
@@ -282,11 +376,15 @@ function placeFromHand(state, emitter, worldX, worldY) {
     return;
   }
 
-  const item = state.inventory.takeOne(id);
+  const result = takeHotbarItem(state);
+  const activeSlot = getActiveHotbarSlot(state);
+  if (result.handChanged) {
+    emitter.emit("player:handChanged", { reason: "place", slot: activeSlot });
+  }
+
+  const item = result.item;
   if (!item) {
     emitter.emit("toast", "Você não possui este item");
-    state.player.hand = null;
-    emitter.emit("inv:changed");
     return;
   }
 
@@ -306,9 +404,6 @@ function placeFromHand(state, emitter, worldX, worldY) {
     emitter.emit("ping", `${getName(id)} colocado`);
   }
 
-  if (state.inventory.count(id) <= 0) {
-    state.player.hand = null;
-  }
   emitter.emit("inv:changed");
 }
 
@@ -333,14 +428,15 @@ function consumeFromHand(state, emitter) {
   if (!id) return false;
   const item = getItem(id);
   if (!item || !(item.tags || []).includes("food")) return false;
-  const taken = state.inventory.takeOne(id);
-  if (!taken) return false;
+  const result = takeHotbarItem(state);
+  const activeSlot = getActiveHotbarSlot(state);
+  if (result.handChanged) {
+    emitter.emit("player:handChanged", { reason: "consume", slot: activeSlot });
+  }
+  if (!result.item) return false;
   emitter.emit("player:consume", { foodId: id });
   applyFood(id);
   emitter.emit("ping", `${getName(id)} consumido`);
-  if (state.inventory.count(id) <= 0) {
-    state.player.hand = null;
-  }
   emitter.emit("inv:changed");
   return true;
 }
@@ -354,13 +450,14 @@ function cookOnCampfire(state, emitter, campfire) {
     emitter.emit("toast", "A fogueira já está cozinhando");
     return;
   }
-  const ok = state.inventory.remove("beef", 1);
-  if (!ok) {
+  const result = takeHotbarItem(state);
+  const activeSlot = getActiveHotbarSlot(state);
+  if (result.handChanged) {
+    emitter.emit("player:handChanged", { reason: "cook", slot: activeSlot });
+  }
+  if (!result.item) {
     emitter.emit("toast", "Precisa de 1 carne crua");
     return;
-  }
-  if (state.inventory.count("beef") <= 0 && state.player.hand === "beef") {
-    state.player.hand = null;
   }
   campfire.startCooking("beef", {
     emitter,
@@ -368,15 +465,39 @@ function cookOnCampfire(state, emitter, campfire) {
   emitter.emit("inv:changed");
 }
 
-function dropFromHand(state, emitter) {
-  const id = state.player.hand;
-  if (!id) return;
-  const item = state.inventory.takeOne(id);
-  if (!item) return;
-  spawnDrop(state, id, { x: state.player.x, y: state.player.y, meta: item.meta || null });
-  emitter.emit("ping", `${getName(id)} dropado`);
-  if (state.inventory.count(id) <= 0) state.player.hand = null;
+function dropFromHotbarSlot(state, emitter, slotIndex) {
+  if (!Number.isInteger(slotIndex)) return false;
+  const hotbar = ensureHotbarState(state);
+  if (slotIndex < 0 || slotIndex >= hotbar.size) return false;
+  const slot = state.inventory?.slots?.[slotIndex];
+  if (!slot) return false;
+
+  const result = takeHotbarItem(state, { slot: slotIndex });
+  const activeSlot = getActiveHotbarSlot(state);
+  if (result.handChanged) {
+    emitter.emit("player:handChanged", { reason: "drop", slot: activeSlot });
+  }
+
+  const item = result.item;
+  if (!item) return false;
+
+  const qty = item.meta ? 1 : item.qty || 1;
+  spawnDrop(state, item.id, {
+    x: state.player.x,
+    y: state.player.y,
+    meta: item.meta || null,
+    qty,
+  });
+  emitter.emit("ping", `${getName(item.id)} dropado`);
   emitter.emit("inv:changed");
+  return true;
+}
+
+function dropFromHand(state, emitter) {
+  if (!state.player.hand) return;
+  const active = getActiveHotbarSlot(state);
+  if (active === null) return;
+  dropFromHotbarSlot(state, emitter, active);
 }
 
 function dropFromInventory(state, emitter, id) {
@@ -387,7 +508,6 @@ function dropFromInventory(state, emitter, id) {
   }
   spawnDrop(state, id, { x: state.player.x, y: state.player.y, meta: item.meta || null });
   emitter.emit("ping", `${getName(id)} dropado`);
-  if (state.player.hand === id && state.inventory.count(id) <= 0) state.player.hand = null;
   emitter.emit("inv:changed");
 }
 
@@ -596,6 +716,18 @@ function bindWorldEvents(state, emitter) {
   if (state.__worldBound) return;
   state.__worldBound = true;
 
+  const parseSlotIndex = (value) => {
+    if (value === null) return null;
+    if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed.length) return undefined;
+      const parsed = Number.parseInt(trimmed, 10);
+      return Number.isNaN(parsed) ? undefined : parsed;
+    }
+    return undefined;
+  };
+
   emitter.on("input:dir", (dir) => {
     const next = dir || { dx: 0, dy: 0 };
     state.player.moveDir = next;
@@ -608,6 +740,41 @@ function bindWorldEvents(state, emitter) {
   emitter.on("inventory:dropOne", ({ id }) => dropFromInventory(state, emitter, id));
   emitter.on("world:drop", ({ id, qty = 1, meta = null }) => {
     spawnDrop(state, id, { qty, meta, x: state.player.x, y: state.player.y });
+  });
+
+  emitter.on("hotbar:select", (payload = {}) => {
+    const target = parseSlotIndex(payload.slot);
+    selectHotbarSlot(state, emitter, target, { toggle: Boolean(payload.toggle) });
+  });
+
+  emitter.on("hotbar:dropOne", (payload = {}) => {
+    const hasSlotProp = Object.prototype.hasOwnProperty.call(payload, "slot");
+    const target = parseSlotIndex(payload.slot);
+    if (!hasSlotProp || target === null) {
+      const active = getActiveHotbarSlot(state);
+      if (active !== null) dropFromHotbarSlot(state, emitter, active);
+      return;
+    }
+    if (target === undefined) return;
+    dropFromHotbarSlot(state, emitter, target);
+  });
+
+  emitter.on("inv:changed", () => {
+    const before = Number.isInteger(state.player.hotbar?.active)
+      ? state.player.hotbar.active
+      : null;
+    ensureHotbarState(state);
+    const after = Number.isInteger(state.player.hotbar?.active)
+      ? state.player.hotbar.active
+      : null;
+    const selectionChanged = before !== after;
+    const handChanged = syncHotbarHand(state);
+    if (selectionChanged) {
+      emitter.emit("hotbar:changed", { active: after });
+    }
+    if (handChanged || selectionChanged) {
+      emitter.emit("player:handChanged", { reason: "inventory", slot: after });
+    }
   });
 }
 

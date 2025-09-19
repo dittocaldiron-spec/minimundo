@@ -189,52 +189,102 @@ canvas#game.is-blur {
 
 .hotbar__slot {
   position: relative;
-  width: 64px;
-  height: 56px;
+  width: 68px;
+  height: 58px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   border-radius: var(--r-md);
   background: rgba(10, 16, 30, 0.58);
   border: 1px solid rgba(148, 163, 184, 0.25);
   color: var(--c-tx-1);
   font-size: 12px;
   text-align: center;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  cursor: pointer;
+  padding: 10px 6px 8px;
 }
 
-.hotbar__slot--active {
+.hotbar__slot:hover {
+  border-color: rgba(226, 232, 240, 0.32);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.hotbar__slot:active {
+  transform: translateY(1px);
+}
+
+.hotbar__slot:focus-visible {
+  outline: 2px solid var(--c-acc-amber);
+  outline-offset: 2px;
+}
+
+.hotbar__slot--selected {
   border-color: var(--c-acc-amber);
   background: rgba(250, 204, 21, 0.16);
   box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.28);
   color: var(--c-tx-0);
 }
 
-.hotbar__key {
-  position: absolute;
-  top: 4px;
-  left: 6px;
-  font-size: 11px;
+.hotbar__slot--empty {
   color: var(--c-tx-dim);
-  opacity: 0.8;
+  opacity: 0.82;
 }
 
-.hotbar__item {
-  font-weight: 600;
-  color: var(--c-tx-0);
-}
-
-.hotbar__item--empty {
+.hotbar__slot--empty .hotbar__label {
   color: var(--c-tx-dim);
   font-style: italic;
   font-weight: 500;
 }
 
-.hotbar__qty {
+.hotbar__slot--cooldown .hotbar__overlay {
+  opacity: 0.75;
+}
+
+.hotbar__key {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 11px;
+  color: var(--c-tx-dim);
+  opacity: 0.85;
+}
+
+.hotbar__label {
+  font-weight: 600;
+  color: var(--c-tx-0);
+  line-height: 1.2;
+  max-width: 90%;
+  word-break: break-word;
+}
+
+.hotbar__slot--selected .hotbar__label {
+  color: var(--c-tx-0);
+}
+
+.hotbar__count {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
   font-size: 11px;
   color: var(--c-tx-1);
+  font-weight: 600;
+}
+
+.hotbar__slot--selected .hotbar__count {
+  color: var(--c-tx-0);
+}
+
+.hotbar__overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.65), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
 /* Pizza de macros (Hunger HUD) */

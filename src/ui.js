@@ -30,7 +30,7 @@ function labelSlot(s) {
   return s.qty > 1 ? `${base} x${s.qty}` : base;
 }
 
-const HOTBAR_SLOTS = 8;
+const HOTBAR_SLOTS = 4;
 
 function restoreCraftingSlots(target, snapshot) {
   Object.keys(target).forEach((key) => delete target[key]);
@@ -148,7 +148,7 @@ function createInventoryWindows() {
           el("div", { class: "craft-grid", id: "craftGrid" }),
           el("div", { class: "craft-in", id: "craftIn" }),
           el("div", { class: "craft-list", id: "craftList" }),
-          el("small", null, "Deposite quando o painel estiver ", el("b", null, "aberto"), ". Fechado: clique equipa/desequipa; Alt+Clique dropa 1.")
+          el("small", null, "Deposite quando o painel estiver ", el("b", null, "aberto"), ". Fechado: use a hotbar (1–4) para equipar; Alt+Clique dropa 1.")
         )
       )
     );
@@ -217,38 +217,81 @@ function renderHotbar(state) {
   if (!wrap) return;
   wrap.innerHTML = "";
 
-  for (let index = 0; index < HOTBAR_SLOTS; index++) {
-    const slot = state.inventory.slots[index] || null;
+  const hotbarState = state.player.hotbar || { active: null, size: HOTBAR_SLOTS };
+  const selected = Number.isInteger(hotbarState.active) ? hotbarState.active : null;
+  const slots = state.inventory.slots || [];
+  const visibleSlots = Math.min(hotbarState.size ?? HOTBAR_SLOTS, HOTBAR_SLOTS);
+
+  for (let index = 0; index < visibleSlots; index++) {
+    const slot = slots[index] || null;
     const keyLabel = index + 1;
-    const active = slot && state.player.hand === slot.id;
+    const isSelected = selected === index;
     const classes = ["hotbar__slot"];
-    if (active) classes.push("hotbar__slot--active");
-    const slotEl = el("div", { class: classes.join(" ") });
-    slotEl.title = slot ? labelSlot(slot) : "Slot vazio";
+    if (isSelected) classes.push("hotbar__slot--selected");
+    if (!slot) classes.push("hotbar__slot--empty");
 
-    slotEl.appendChild(el("span", { class: "hotbar__key" }, keyLabel));
+    const cooldownValue =
+      slot?.cooldown ?? slot?.meta?.cooldown ?? slot?.meta?.cooldownMs ?? 0;
+    const isCooling =
+      typeof cooldownValue === "number"
+        ? cooldownValue > 0
+        : Boolean(cooldownValue);
+    if (isCooling) classes.push("hotbar__slot--cooldown");
 
-    if (slot) {
-      slotEl.appendChild(el("span", { class: "hotbar__item" }, getName(slot.id)));
-      const qty = slot.meta ? 1 : slot.qty;
-      if (qty > 1) {
-        slotEl.appendChild(el("span", { class: "hotbar__qty" }, `x${qty}`));
-      }
-    } else {
-      slotEl.appendChild(
-        el("span", { class: "hotbar__item hotbar__item--empty" }, "Vazio")
-      );
-    }
+    const slotEl = el("button", {
+      class: classes.join(" "),
+      type: "button",
+      "data-slot": index,
+      "aria-pressed": isSelected ? "true" : "false",
+    });
+
+    const titleParts = [`Slot ${keyLabel}`];
+    if (slot) titleParts.push(labelSlot(slot));
+    titleParts.push("LMB: selecionar/deselecionar");
+    if (slot) titleParts.push("RMB: soltar 1");
+    titleParts.push("Teclas 1-4: seleção rápida");
+    slotEl.title = titleParts.join(" • ");
+
+    const label = slot ? getName(slot.id) : "Vazio";
+    const count = slot ? (slot.meta ? 1 : slot.qty || 0) : 0;
+    const countText = count > 0 ? `×${count}` : "";
+
+    slotEl.append(
+      el("span", { class: "hotbar__key" }, keyLabel),
+      el("span", { class: "hotbar__label" }, label),
+      el("span", { class: "hotbar__count" }, countText),
+      el("span", { class: "hotbar__overlay" })
+    );
+
+    slotEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      emitter.emit("hotbar:select", { slot: index, toggle: true });
+    });
+
+    slotEl.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      if (!slot) return;
+      emitter.emit("hotbar:dropOne", { slot: index });
+    });
 
     wrap.appendChild(slotEl);
   }
 }
 function renderHand(state) {
   const h = $("#handInfo");
-  if (h) {
-    h.textContent = state.player.hand ? getName(state.player.hand) : "(vazio)";
+  if (!h) return;
+  const activeSlot = Number.isInteger(state.player.hotbar?.active)
+    ? state.player.hotbar.active
+    : null;
+  if (state.player.hand) {
+    const name = getName(state.player.hand);
+    h.textContent =
+      activeSlot !== null ? `${name} (Slot ${activeSlot + 1})` : name;
+  } else if (activeSlot !== null) {
+    h.textContent = `(Slot ${activeSlot + 1} vazio)`;
+  } else {
+    h.textContent = "(vazio)";
   }
-  renderHotbar(state);
 }
 function renderInventoryGrid(state, emitter) {
   const grid = $("#invGrid");
@@ -261,7 +304,7 @@ function renderInventoryGrid(state, emitter) {
     const d = el("div", { class: "slot" + (s ? " full" : "") }, s ? labelSlot(s) : "");
     d.title = craftOpen
       ? "Clique: mover 1 p/ crafting • Alt+Clique: dropar 1"
-      : "Clique: equipar/desequipar • Alt+Clique: dropar 1";
+      : "Use a hotbar (1–4) para equipar • Alt+Clique: dropar 1";
 
     d.addEventListener("click", (e) => {
       if (!s) return;
@@ -282,11 +325,6 @@ function renderInventoryGrid(state, emitter) {
         }
         return;
       }
-
-      // Equipar/desequipar na mão
-      state.player.hand = state.player.hand === s.id ? null : s.id;
-      renderHand(state);
-      emitter.emit("ping", state.player.hand ? `${getName(s.id)} equipado` : `${getName(s.id)} desequipado`);
     });
 
     grid.appendChild(d);
@@ -472,10 +510,6 @@ function renderChest(state, chestEntity, emitter) {
       if (movedQty <= 0) {
         emitter.emit("toast", "Baú sem espaço!");
       } else {
-        if (state.player.hand === s.id && state.inventory.count(s.id) <= 0) {
-          state.player.hand = null;
-          renderHand(state);
-        }
         emitter.emit("ping", `${getName(s.id)} armazenado (${movedQty})`);
         emitter.emit("inv:changed");
         emitter.emit("chest:changed");
@@ -541,6 +575,15 @@ function bindInventoryOpenClose(state, emitter) {
     renderInventoryGrid(state, emitter);
     renderMoney(state);
     renderHand(state);
+    renderHotbar(state);
+  });
+  emitter.on("player:handChanged", () => {
+    renderHand(state);
+    renderHotbar(state);
+  });
+  emitter.on("hotbar:changed", () => {
+    renderHotbar(state);
+    renderHand(state);
   });
   emitter.on("craft:changed", () => {
     if (!craftOpen) return;
@@ -551,11 +594,12 @@ function bindInventoryOpenClose(state, emitter) {
   const handInfo = $("#handInfo");
   if (handInfo) {
     handInfo.addEventListener("click", () => {
-      if (state.player.hand) {
-        const name = getName(state.player.hand);
-        state.player.hand = null;
-        renderHand(state);
-        emitter.emit("ping", `${name} desequipado`);
+      const hasActiveSlot = Number.isInteger(state.player.hotbar?.active);
+      if (!state.player.hand && !hasActiveSlot) return;
+      const current = state.player.hand;
+      emitter.emit("hotbar:select", { slot: null });
+      if (current) {
+        emitter.emit("ping", `${getName(current)} desequipado`);
       }
     });
   }
@@ -647,6 +691,7 @@ export function setupUI(state, emitter) {
   createInventoryWindows();
   renderMoney(state);
   renderHand(state);
+  renderHotbar(state);
   renderInventoryGrid(state, emitter);
 
   bindInventoryOpenClose(state, emitter);

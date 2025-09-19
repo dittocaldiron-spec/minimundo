@@ -12,6 +12,7 @@
  * - click:left               ({ sx, sy, alt, shift, ctrl }) - clique esquerdo no canvas
  * - click:right              ({ sx, sy, alt, shift, ctrl }) - clique direito no canvas
  * - input:dir                ({ dx, dy }) - vetor de direção normalizado a cada frame
+ * - hotbar:select            ({ slot }) - teclas 1–4 selecionam slots da hotbar
  */
 
 export function setupControls(state, emitter) {
@@ -58,6 +59,8 @@ export function setupControls(state, emitter) {
     return { sx, sy };
   }
 
+  const HOTBAR_KEYS = ["1", "2", "3", "4"];
+
   function onKeyDown(e) {
     const k = toLower(e);
     if (k === "w") keys.w = state.input.w = true;
@@ -70,6 +73,14 @@ export function setupControls(state, emitter) {
     if (k === "c") emitter.emit("action:toggleWallet");
     if (k === "escape") emitter.emit("action:esc");
     if (k === "q") emitter.emit("player:dropHandOne");
+
+    if (HOTBAR_KEYS.includes(k)) {
+      const slotIndex = Number.parseInt(k, 10) - 1;
+      if (Number.isInteger(slotIndex) && slotIndex >= 0) {
+        emitter.emit("hotbar:select", { slot: slotIndex });
+        e.preventDefault();
+      }
+    }
   }
 
   function onKeyUp(e) {
