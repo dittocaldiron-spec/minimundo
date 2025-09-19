@@ -5,6 +5,29 @@ import { DECAY, MACRO_EFFECTS, STAMINA, HUNGER_CONSTANTS } from "../config/hunge
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const EPSILON = 0.0001;
 const CALORIES_TO_HUNGER = 0.5;
+const MACRO_KEYS = ["carbs", "protein", "fat"];
+const MACRO_LABEL_ALIASES = {
+  carb: "carbs",
+  carbs: "carbs",
+  protein: "protein",
+  fat: "fat",
+};
+const MACRO_CALORIES = { carbs: 4, protein: 4, fat: 9 };
+
+function roundToHundredth(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function parseLabeledValue(labelWithValue) {
+  if (typeof labelWithValue !== "string") return null;
+  const match = labelWithValue.match(/^([^<]+)<([^>]+)>$/);
+  if (!match) return null;
+  const [, label, valueStr] = match;
+  const value = Number.parseFloat(valueStr);
+  if (!Number.isFinite(value)) return null;
+  return { label: label.trim(), value };
+}
 
 const state = {
   macros: { carbs: 60, protein: 45, fat: 30 },
@@ -56,6 +79,85 @@ function emitEffectsChanged(prevEffects) {
   const after = [...state.effects].sort().join(",");
   if (before === after) return;
   busRef.emit("effects:changed", { effects: new Set(state.effects) });
+}
+
+function computeFoodEffect(item) {
+  if (!item) {
+    return { macros: { carbs: 0, protein: 0, fat: 0 }, hunger: 0 };
+  }
+
+  const labelStrings = [];
+  if (Array.isArray(item.labels)) {
+    labelStrings.push(...item.labels);
+  }
+  if (Array.isArray(item.tags)) {
+    for (const tag of item.tags) {
+      if (typeof tag === "string" && tag.includes("<")) {
+        labelStrings.push(tag);
+      }
+    }
+  }
+  if (!labelStrings.length) {
+    return { macros: { carbs: 0, protein: 0, fat: 0 }, hunger: 0 };
+  }
+
+  const weights = { carbs: 0, protein: 0, fat: 0 };
+  let portion = 0;
+  for (const label of labelStrings) {
+    const parsed = parseLabeledValue(label);
+    if (!parsed) continue;
+    const key = parsed.label.trim().toLowerCase();
+    if (key === "portion") {
+      if (parsed.value > 0) {
+        portion += parsed.value;
+      }
+      continue;
+    }
+    const macroKey = MACRO_LABEL_ALIASES[key];
+    if (macroKey && parsed.value > 0) {
+      weights[macroKey] += parsed.value;
+    }
+  }
+
+  portion = roundToHundredth(Math.max(0, portion));
+  const totalWeight = MACRO_KEYS.reduce(
+    (sum, key) => sum + Math.max(0, weights[key] || 0),
+    0
+  );
+  if (portion <= 0 || totalWeight <= 0) {
+    return { macros: { carbs: 0, protein: 0, fat: 0 }, hunger: 0 };
+  }
+
+  const macros = { carbs: 0, protein: 0, fat: 0 };
+  const positiveEntries = MACRO_KEYS.filter((key) => (weights[key] || 0) > 0).map(
+    (key) => ({ key, weight: weights[key] })
+  );
+
+  let remaining = portion;
+  positiveEntries.forEach((entry, index) => {
+    const { key, weight } = entry;
+    if (index === positiveEntries.length - 1) {
+      const value = roundToHundredth(Math.max(0, remaining));
+      macros[key] = value;
+      remaining = roundToHundredth(Math.max(0, remaining - value));
+      return;
+    }
+    const raw = (portion * weight) / totalWeight;
+    let value = roundToHundredth(raw);
+    if (value > remaining) {
+      value = roundToHundredth(remaining);
+    }
+    macros[key] = value;
+    remaining = roundToHundredth(Math.max(0, remaining - value));
+  });
+
+  const calories = MACRO_KEYS.reduce(
+    (sum, key) => sum + macros[key] * (MACRO_CALORIES[key] || 0),
+    0
+  );
+  const hunger = roundToHundredth(calories * CALORIES_TO_HUNGER);
+
+  return { macros, hunger };
 }
 
 function getMacroPercentage(macro) {
@@ -227,25 +329,29 @@ export function isBlurActive() {
 
 export function applyFood(foodId) {
   const item = foodId ? getItem(foodId) : null;
-  const meta = item?.meta || {};
+  const effect = computeFoodEffect(item);
+  if (!effect) return;
   let changed = false;
-  for (const macro of ["carbs", "protein", "fat"]) {
-    if (typeof meta[macro] === "number") {
-      state.macros[macro] = clamp(
-        state.macros[macro] + meta[macro],
-        0,
-        Infinity
-      );
+  for (const macro of MACRO_KEYS) {
+    const delta = roundToHundredth(Math.max(0, effect.macros?.[macro] || 0));
+    if (delta <= 0) continue;
+    const updated = clamp(state.macros[macro] + delta, 0, Infinity);
+    if (Math.abs(updated - state.macros[macro]) > EPSILON) {
+      state.macros[macro] = updated;
       changed = true;
     }
   }
-  if (typeof meta.calories === "number") {
-    state.hunger = clamp(
-      state.hunger + meta.calories * CALORIES_TO_HUNGER,
+  const hungerDelta = roundToHundredth(Math.max(0, effect.hunger || 0));
+  if (hungerDelta > 0) {
+    const updated = clamp(
+      state.hunger + hungerDelta,
       0,
       HUNGER_CONSTANTS.hungerMax
     );
-    changed = true;
+    if (Math.abs(updated - state.hunger) > EPSILON) {
+      state.hunger = roundToHundredth(updated);
+      changed = true;
+    }
   }
   if (changed) {
     recalcEffects();
@@ -254,13 +360,7 @@ export function applyFood(foodId) {
 }
 
 function parseCost(labelWithMod) {
-  if (typeof labelWithMod !== "string") return null;
-  const match = labelWithMod.match(/^([^<]+)<([^>]+)>$/);
-  if (!match) return null;
-  const [, label, valueStr] = match;
-  const value = Number.parseFloat(valueStr);
-  if (!Number.isFinite(value)) return null;
-  return { label: label.trim(), value };
+  return parseLabeledValue(labelWithMod);
 }
 
 export function applyActionCost(labelWithMod, context = {}) {

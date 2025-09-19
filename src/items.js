@@ -14,25 +14,25 @@ export const items = {
     name: "Carne",
     maxStack: 100,
     tags: ["food", "noSolid"],
-    meta: { carbs: 0, protein: 14, fat: 10, calories: 120 },
+    labels: ["portion<24>", "carb<0>", "protein<14>", "fat<10>"],
   },
   cookedbeef: {
     name: "Carne Cozida",
     maxStack: 100,
     tags: ["food", "noSolid"],
-    meta: { carbs: 0, protein: 18, fat: 12, calories: 160 },
+    labels: ["portion<30>", "carb<0>", "protein<18>", "fat<12>"],
   },
   berries: {
     name: "Frutas Silvestres",
     maxStack: 100,
     tags: ["food", "noSolid"],
-    meta: { carbs: 18, protein: 2, fat: 1, calories: 60 },
+    labels: ["portion<21>", "carb<18>", "protein<2>", "fat<1>"],
   },
   nuts: {
     name: "Nozes",
     maxStack: 100,
     tags: ["food", "noSolid"],
-    meta: { carbs: 8, protein: 7, fat: 20, calories: 200 },
+    labels: ["portion<35>", "carb<8>", "protein<7>", "fat<20>"],
   },
 
   // Drops de mob
