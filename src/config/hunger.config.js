@@ -34,6 +34,9 @@ export const STAMINA = {
   runLossPerSec: 8,
   regenPerSec: 4,
   minToStartSprint: 3,
+  cooldownDurationSec: 60,
+  significantSprintDrain: 25,
+  sprintDrainDecayPerSec: 6,
 };
 
 export const HUNGER_CONSTANTS = {
