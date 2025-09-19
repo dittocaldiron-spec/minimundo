@@ -22,7 +22,6 @@ import {
 import {
   populateNaturalSpawns,
   updateNaturalSpawns,
-} from "./systems/spawn.js";
 import {
   initHunger,
   applyActionGroup,
@@ -30,10 +29,10 @@ import {
   hasEffect,
   tick as hungerTick,
   getSprintMultiplier,
+  isStaminaOnCooldown,
   applyFood,
 } from "./systems/hunger.js";
 import { STAMINA } from "./config/hunger.config.js";
-
 const TILE = 32;
 const PLAYER_RADIUS = 14;
 const INTERACT_RANGE = 56;
@@ -426,20 +425,53 @@ function mouseWorldFromScreen(state, sx, sy) {
 function consumeFromHand(state, emitter) {
   const id = state.player.hand;
   if (!id) return false;
-  const item = getItem(id);
-  if (!item || !(item.tags || []).includes("food")) return false;
-  const result = takeHotbarItem(state);
-  const activeSlot = getActiveHotbarSlot(state);
+
+  const itemDef = getItem(id);
+  if (!itemDef || !((itemDef.tags || []).includes("food"))) return false;
+
+  // 1) Tenta consumir a partir da HOTBAR
+  const result = typeof takeHotbarItem === "function" ? takeHotbarItem(state) : { item: null, handChanged: false };
+  const activeSlot = typeof getActiveHotbarSlot === "function" ? getActiveHotbarSlot(state) : null;
+
   if (result.handChanged) {
     emitter.emit("player:handChanged", { reason: "consume", slot: activeSlot });
   }
-  if (!result.item) return false;
-  emitter.emit("player:consume", { foodId: id });
-  applyFood(id);
+
+  // 2) Item efetivamente consumido
+  let consumed = result.item;
+  if (!consumed || (id && consumed.id !== id)) {
+    // fallback: INVENTÁRIO
+    const taken = state?.inventory?.takeOne ? state.inventory.takeOne(id) : null;
+    if (!taken) return false;
+    consumed = taken;
+  }
+
+  // 3) Meta preservada
+  const meta = consumed?.meta ?? itemDef?.meta ?? null;
+
+  // 4) Evento de consumo padronizado
+  emitter.emit("player:consume", {
+    foodId: id || consumed?.id,
+    meta,
+    item: consumed,
+    consumed,         // compat com código antigo
+    slot: activeSlot || null,
+  });
+
+  // 5) Aplica efeitos do alimento (API minimalista ou rica)
+  if (typeof applyFood === "function") {
+    // Se sua applyFood aceita só (id):
+    applyFood(id || consumed?.id);
+    // Se aceitar meta/item, você pode trocar por:
+    // applyFood(id || consumed?.id, meta, consumed);
+  }
+
+  // Feedbacks
   emitter.emit("ping", `${getName(id)} consumido`);
   emitter.emit("inv:changed");
   return true;
 }
+
 
 function cookOnCampfire(state, emitter, campfire) {
   if (!campfire.canCook("beef")) {
@@ -636,7 +668,12 @@ function movePlayer(state, dt) {
 
   let running = false;
   const hunger = getHungerState();
-  if ((dir.sprint || state.input?.dir?.sprint) && hunger.stamina >= STAMINA.minToStartSprint) {
+  const wantsSprint = dir.sprint || state.input?.dir?.sprint;
+  if (
+    wantsSprint &&
+    !isStaminaOnCooldown() &&
+    hunger.stamina >= STAMINA.minToStartSprint
+  ) {
     running = true;
     speed *= SPRINT_MULTIPLIER * getSprintMultiplier();
   }

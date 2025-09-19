@@ -5,18 +5,188 @@ import { DECAY, MACRO_EFFECTS, STAMINA, HUNGER_CONSTANTS } from "../config/hunge
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const EPSILON = 0.0001;
 const CALORIES_TO_HUNGER = 0.5;
+const MACRO_KEYS = new Set(["carbs", "protein", "fat"]);
+const FOOD_STRING_PATTERN = /^(?:macro[.:])?([a-z\u00c0-\u017f]+)[^0-9+\-]*([+\-]?\d+(?:[.,]\d+)?)/i;
+
+function toFiniteNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().replace(/,/g, ".");
+    if (!normalized) return null;
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function detectStatKey(raw) {
+  if (typeof raw !== "string") return null;
+  let key = raw.trim().toLowerCase();
+  if (!key) return null;
+  key = key
+    .replace(/^macro[.:]/, "")
+    .replace(/^macros[.:]/, "")
+    .replace(/^stat[.:]/, "")
+    .replace(/^type[.:]/, "")
+    .replace(/^value[.:]/, "")
+    .replace(/[-_\s]/g, "");
+  if (!key) return null;
+  if (MACRO_KEYS.has(key)) return key;
+  if (key.includes("carb")) return "carbs";
+  if (key.includes("protein")) return "protein";
+  if (key === "fat" || key.includes("lipid")) return "fat";
+  if (key === "energy" || key.includes("stamina") || key.includes("energia")) return "stamina";
+  if (
+    key.includes("hunger") ||
+    key.includes("fome") ||
+    key.includes("satiety") ||
+    key.includes("saciado") ||
+    key.includes("fullness") ||
+    key === "restore" ||
+    key === "food" ||
+    key === "foods" ||
+    key === "restorehunger"
+  ) {
+    return "hunger";
+  }
+  if (key.includes("calor")) return "calories";
+  return null;
+}
+
+function applyStat(result, key, amount) {
+  const stat = detectStatKey(key);
+  if (!stat) return false;
+  const value = toFiniteNumber(amount);
+  if (value == null) return false;
+  if (MACRO_KEYS.has(stat)) {
+    result.macros[stat] = (result.macros[stat] || 0) + value;
+    return true;
+  }
+  if (stat === "hunger") {
+    result.hunger += value;
+    return true;
+  }
+  if (stat === "stamina") {
+    result.stamina += value;
+    return true;
+  }
+  if (stat === "calories") {
+    result.hunger += value * CALORIES_TO_HUNGER;
+    return true;
+  }
+  return false;
+}
+
+function parseStringEffect(str, result) {
+  if (typeof str !== "string") return false;
+  const match = str.trim().match(FOOD_STRING_PATTERN);
+  if (!match) return false;
+  const [, rawKey, rawValue] = match;
+  return applyStat(result, rawKey, rawValue);
+}
+
+function collectNutrition(source, result, visited = new Set()) {
+  if (source == null) return;
+  if (Array.isArray(source)) {
+    for (const entry of source) {
+      collectNutrition(entry, result, visited);
+    }
+    return;
+  }
+  if (typeof source === "number") {
+    result.hunger += source;
+    return;
+  }
+  if (typeof source === "string") {
+    if (!parseStringEffect(source, result)) {
+      const numeric = toFiniteNumber(source);
+      if (numeric != null) {
+        result.hunger += numeric;
+      }
+    }
+    return;
+  }
+  if (typeof source !== "object") return;
+  if (visited.has(source)) return;
+  visited.add(source);
+
+  const descriptorKey =
+    source.stat ??
+    source.type ??
+    source.kind ??
+    source.key ??
+    source.target ??
+    source.id ??
+    source.name ??
+    null;
+  const descriptorValue =
+    source.value ??
+    source.amount ??
+    source.delta ??
+    source.change ??
+    source.qty ??
+    source.quantity ??
+    source.points ??
+    source.magnitude ??
+    source.restore ??
+    null;
+  if (descriptorKey && descriptorValue != null) {
+    applyStat(result, descriptorKey, descriptorValue);
+  }
+
+  for (const [rawKey, value] of Object.entries(source)) {
+    if (applyStat(result, rawKey, value)) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        collectNutrition(entry, result, visited);
+      }
+      continue;
+    }
+    if (typeof value === "object" && value !== null) {
+      collectNutrition(value, result, visited);
+      continue;
+    }
+    if (typeof value === "string") {
+      if (parseStringEffect(value, result)) continue;
+      const numeric = toFiniteNumber(value);
+      if (numeric != null && detectStatKey(rawKey) === "hunger") {
+        result.hunger += numeric;
+      }
+    }
+  }
+}
+
+function normalizeFoodEffects(foodId, metaOverride) {
+  const result = { macros: {}, hunger: 0, stamina: 0 };
+  const visited = new Set();
+  if (metaOverride != null) {
+    collectNutrition(metaOverride, result, visited);
+  }
+  const item = foodId ? getItem(foodId) : null;
+  if (item?.meta && (!metaOverride || metaOverride !== item.meta)) {
+    collectNutrition(item.meta, result, visited);
+  }
+  return result;
+}
 
 const state = {
   macros: { carbs: 60, protein: 45, fat: 30 },
   hunger: 80,
   stamina: HUNGER_CONSTANTS.staminaMax,
   effects: new Set(),
+  staminaCooldownMs: 0,
+  sprintDrainAccumulator: 0,
 };
 
 let busRef = null;
 let lastSnapshot = null;
 let blurTimerMs = 0;
 let blurVisible = false;
+let lastFatigueEvent = { active: false, remainingMs: 0, remainingSec: 0 };
 
 const activity = {
   running: false,
@@ -25,25 +195,51 @@ const activity = {
 };
 
 function cloneState() {
+  const fatigue = getCooldownPayload();
   return {
     macros: { ...state.macros },
     stamina: state.stamina,
     hunger: state.hunger,
     effects: new Set(state.effects),
-  };
-}
+// antes do return, calcule uma vez:
+const cooldownMs = Math.max(0, state.staminaCooldownMs);
+
+// se quiser manter o helper:
+const active = typeof isStaminaOnCooldown === 'function'
+  ? isStaminaOnCooldown()
+  : cooldownMs > 0;
+
+const fatigue = {
+  active,
+  remainingMs: cooldownMs,
+  remainingSec: cooldownMs / 1000,
+};
+
+// retorno final (remova os marcadores de conflito):
+return {
+  // ...outros campos
+  staminaCooldownMs: cooldownMs,
+  fatigue,
+};
+
 
 function emitStateChanged(force = false) {
   if (!busRef) return;
   const snapshot = cloneState();
   if (!force && lastSnapshot) {
     const prev = lastSnapshot;
+    const prevFatigue = prev.fatigue || { active: false, remainingMs: 0 };
+    const nextFatigue = snapshot.fatigue || { active: false, remainingMs: 0 };
     const diff =
       Math.abs(prev.hunger - snapshot.hunger) > EPSILON ||
       Math.abs(prev.stamina - snapshot.stamina) > EPSILON ||
       Math.abs(prev.macros.carbs - snapshot.macros.carbs) > EPSILON ||
       Math.abs(prev.macros.protein - snapshot.macros.protein) > EPSILON ||
-      Math.abs(prev.macros.fat - snapshot.macros.fat) > EPSILON;
+      Math.abs(prev.macros.fat - snapshot.macros.fat) > EPSILON ||
+      Math.abs((prev.staminaCooldownMs || 0) - (snapshot.staminaCooldownMs || 0)) >
+        EPSILON ||
+      prevFatigue.active !== nextFatigue.active ||
+      Math.abs(prevFatigue.remainingMs - nextFatigue.remainingMs) > EPSILON;
     if (!diff) return;
   }
   lastSnapshot = snapshot;
@@ -56,6 +252,64 @@ function emitEffectsChanged(prevEffects) {
   const after = [...state.effects].sort().join(",");
   if (before === after) return;
   busRef.emit("effects:changed", { effects: new Set(state.effects) });
+}
+
+function getCooldownPayload() {
+  const remainingMs = Math.max(0, state.staminaCooldownMs);
+  return {
+    active: remainingMs > EPSILON,
+    remainingMs,
+    remainingSec: remainingMs / 1000,
+  };
+}
+
+function emitFatigueChanged(force = false) {
+  if (!busRef) return;
+  const payload = getCooldownPayload();
+  if (
+    !force &&
+    lastFatigueEvent.active === payload.active &&
+    Math.abs(lastFatigueEvent.remainingMs - payload.remainingMs) < 1
+  ) {
+    return;
+  }
+  lastFatigueEvent = { ...payload };
+  busRef.emit("stamina:fatigue", payload);
+}
+
+function startStaminaCooldown() {
+  const durationSec = STAMINA.cooldownDurationSec ?? 0;
+  const durationMs = Math.max(0, durationSec * 1000);
+  if (durationMs <= 0) return;
+  state.staminaCooldownMs = durationMs;
+  state.sprintDrainAccumulator = 0;
+  emitFatigueChanged(true);
+}
+
+function updateStaminaCooldown(dtMs) {
+  if (state.staminaCooldownMs <= 0) {
+    if (lastFatigueEvent.active) {
+      emitFatigueChanged();
+    }
+    return;
+  }
+  state.staminaCooldownMs = Math.max(0, state.staminaCooldownMs - dtMs);
+  if (state.staminaCooldownMs <= 0) {
+    state.sprintDrainAccumulator = 0;
+  }
+  emitFatigueChanged();
+}
+
+function decaySprintAccumulator(dt) {
+  if (state.sprintDrainAccumulator <= 0) return;
+  if (isStaminaOnCooldown()) return;
+  if (activity.running) return;
+  const rate = STAMINA.sprintDrainDecayPerSec || 0;
+  if (rate <= 0) return;
+  state.sprintDrainAccumulator = Math.max(
+    0,
+    state.sprintDrainAccumulator - rate * dt
+  );
 }
 
 function getMacroPercentage(macro) {
@@ -115,6 +369,10 @@ function recalcEffects() {
   const starving = shouldStarve();
   if (starving) {
     state.effects.add("starving");
+  }
+
+  if (isStaminaOnCooldown()) {
+    state.effects.add("fatigued");
   }
 
   emitEffectsChanged(prev);
@@ -198,13 +456,22 @@ function ensureBusListeners() {
   busRef.on("player:consume", onPlayerConsume);
 }
 
-function onPlayerConsume({ foodId }) {
-  applyFood(foodId);
+function onPlayerConsume(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    applyFood(payload);
+    return;
+  }
+  applyFood(payload.foodId, payload.meta ?? payload);
 }
 
 export function initHunger(bus) {
   busRef = bus;
   ensureBusListeners();
+  state.staminaCooldownMs = 0;
+  state.sprintDrainAccumulator = 0;
+  lastFatigueEvent = { active: false, remainingMs: 0, remainingSec: 0 };
+  lastSnapshot = null;
+  emitFatigueChanged(true);
   emitStateChanged(true);
   emitEffectsChanged(new Set());
 }
@@ -217,6 +484,10 @@ export function getSprintMultiplier() {
   return computeSprintMultiplier();
 }
 
+export function isStaminaOnCooldown() {
+  return state.staminaCooldownMs > EPSILON;
+}
+
 export function hasEffect(effect) {
   return state.effects.has(effect);
 }
@@ -225,27 +496,40 @@ export function isBlurActive() {
   return blurVisible;
 }
 
-export function applyFood(foodId) {
-  const item = foodId ? getItem(foodId) : null;
-  const meta = item?.meta || {};
+export function applyFood(foodId, metaOverride = null) {
+  const effects = normalizeFoodEffects(foodId, metaOverride);
   let changed = false;
-  for (const macro of ["carbs", "protein", "fat"]) {
-    if (typeof meta[macro] === "number") {
-      state.macros[macro] = clamp(
-        state.macros[macro] + meta[macro],
-        0,
-        Infinity
-      );
+  for (const macro of MACRO_KEYS) {
+    const delta = effects.macros[macro];
+    if (!delta || Math.abs(delta) <= EPSILON) continue;
+    const previous = state.macros[macro] ?? 0;
+    const next = clamp(previous + delta, 0, Infinity);
+    if (Math.abs(next - previous) > EPSILON) {
+      state.macros[macro] = next;
       changed = true;
     }
   }
-  if (typeof meta.calories === "number") {
+  if (Math.abs(effects.hunger) > EPSILON) {
+    const previous = state.hunger;
     state.hunger = clamp(
-      state.hunger + meta.calories * CALORIES_TO_HUNGER,
+      previous + effects.hunger,
       0,
       HUNGER_CONSTANTS.hungerMax
     );
-    changed = true;
+    if (Math.abs(state.hunger - previous) > EPSILON) {
+      changed = true;
+    }
+  }
+  if (Math.abs(effects.stamina) > EPSILON) {
+    const previous = state.stamina;
+    state.stamina = clamp(
+      previous + effects.stamina,
+      0,
+      HUNGER_CONSTANTS.staminaMax
+    );
+    if (Math.abs(state.stamina - previous) > EPSILON) {
+      changed = true;
+    }
   }
   if (changed) {
     recalcEffects();
@@ -297,11 +581,27 @@ export function applyActionCost(labelWithMod, context = {}) {
       HUNGER_CONSTANTS.hungerMax
     );
   } else if (label === "stamina") {
+    const previous = state.stamina;
     state.stamina = clamp(
       state.stamina - amount,
       0,
       HUNGER_CONSTANTS.staminaMax
     );
+    const drained = previous - state.stamina;
+    if (drained > EPSILON) {
+      if (previous > EPSILON && state.stamina <= EPSILON) {
+        startStaminaCooldown();
+      } else if (
+        action === "run" &&
+        !isStaminaOnCooldown() &&
+        (STAMINA.significantSprintDrain || 0) > 0
+      ) {
+        state.sprintDrainAccumulator += drained;
+        if (state.sprintDrainAccumulator >= STAMINA.significantSprintDrain) {
+          startStaminaCooldown();
+        }
+      }
+    }
   } else if (label.startsWith("macro.")) {
     const key = label.split(".")[1];
     if (key && state.macros[key] != null) {
@@ -322,8 +622,10 @@ export function applyActionGroup(action, scale = 1) {
 }
 
 export function tick(dtMs) {
-  const dt = Math.max(0, dtMs) / 1000;
-  if (!Number.isFinite(dt) || dt <= 0) {
+  const safeDtMs = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+  const dt = safeDtMs / 1000;
+  updateStaminaCooldown(safeDtMs);
+  if (dt <= 0) {
     updateBlur(dtMs);
     return;
   }
@@ -332,6 +634,7 @@ export function tick(dtMs) {
   recalcEffects();
   applyHungerDecay(dt);
   applyStaminaIdle(dt);
+  decaySprintAccumulator(dt);
   updateBlur(dtMs);
   emitStateChanged();
 
