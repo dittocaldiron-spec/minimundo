@@ -1,5 +1,5 @@
 // events.js
-import { TinyEmitter } from "tiny-emitter";
+import TinyEmitter from "tiny-emitter";
 
 const emitter = new TinyEmitter();
 export default emitter;

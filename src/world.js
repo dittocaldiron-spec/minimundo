@@ -30,7 +30,7 @@ import {
   hasEffect,
   tick as hungerTick,
   getSprintMultiplier,
-  applyFood,
+  isStaminaOnCooldown,
 } from "./systems/hunger.js";
 import { STAMINA } from "./config/hunger.config.js";
 
@@ -335,8 +335,8 @@ function consumeFromHand(state, emitter) {
   if (!item || !(item.tags || []).includes("food")) return false;
   const taken = state.inventory.takeOne(id);
   if (!taken) return false;
-  emitter.emit("player:consume", { foodId: id });
-  applyFood(id);
+  const meta = taken.meta ?? item?.meta ?? null;
+  emitter.emit("player:consume", { foodId: id, meta, item, consumed: taken });
   emitter.emit("ping", `${getName(id)} consumido`);
   if (state.inventory.count(id) <= 0) {
     state.player.hand = null;
@@ -516,7 +516,12 @@ function movePlayer(state, dt) {
 
   let running = false;
   const hunger = getHungerState();
-  if ((dir.sprint || state.input?.dir?.sprint) && hunger.stamina >= STAMINA.minToStartSprint) {
+  const wantsSprint = dir.sprint || state.input?.dir?.sprint;
+  if (
+    wantsSprint &&
+    !isStaminaOnCooldown() &&
+    hunger.stamina >= STAMINA.minToStartSprint
+  ) {
     running = true;
     speed *= SPRINT_MULTIPLIER * getSprintMultiplier();
   }
