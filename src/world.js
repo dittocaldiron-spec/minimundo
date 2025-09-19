@@ -30,6 +30,7 @@ import {
   hasEffect,
   tick as hungerTick,
   getSprintMultiplier,
+  isStaminaOnCooldown,
   applyFood,
 } from "./systems/hunger.js";
 import { STAMINA } from "./config/hunger.config.js";
@@ -516,7 +517,12 @@ function movePlayer(state, dt) {
 
   let running = false;
   const hunger = getHungerState();
-  if ((dir.sprint || state.input?.dir?.sprint) && hunger.stamina >= STAMINA.minToStartSprint) {
+  const wantsSprint = dir.sprint || state.input?.dir?.sprint;
+  if (
+    wantsSprint &&
+    !isStaminaOnCooldown() &&
+    hunger.stamina >= STAMINA.minToStartSprint
+  ) {
     running = true;
     speed *= SPRINT_MULTIPLIER * getSprintMultiplier();
   }
